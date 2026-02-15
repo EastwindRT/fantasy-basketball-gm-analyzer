@@ -317,6 +317,11 @@ function OverviewTab({ sortedGMs, allSeasons, onSelectGM }: { sortedGMs: GMAnaly
         </Card>
       )}
 
+      {/* Category Win Rates */}
+      {sortedGMs.length > 0 && Object.keys(sortedGMs[0].categoryDominance).length > 0 && (
+        <CategoryWinsTable sortedGMs={sortedGMs} onSelectGM={onSelectGM} />
+      )}
+
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {sortedGMs.slice(0, 6).map((gm, i) => {
           const id = gm.managerGuid || gm.managerId;
@@ -360,6 +365,86 @@ function OverviewTab({ sortedGMs, allSeasons, onSelectGM }: { sortedGMs: GMAnaly
         })}
       </div>
     </div>
+  );
+}
+
+// ============================================================================
+// CATEGORY WINS TABLE
+// ============================================================================
+
+function CategoryWinsTable({ sortedGMs, onSelectGM }: { sortedGMs: GMAnalytics[]; onSelectGM: (id: string) => void }) {
+  // Collect all category names across all GMs
+  const categories = useMemo(() => {
+    const catSet = new Set<string>();
+    sortedGMs.forEach(gm => Object.keys(gm.categoryDominance).forEach(c => catSet.add(c)));
+    return Array.from(catSet).sort();
+  }, [sortedGMs]);
+
+  // Sort GMs by total category wins across all categories
+  const rankedGMs = useMemo(() => {
+    return [...sortedGMs].sort((a, b) => {
+      const aTotal = Object.values(a.categoryDominance).reduce((s, c) => s + c.wins, 0);
+      const bTotal = Object.values(b.categoryDominance).reduce((s, c) => s + c.wins, 0);
+      return bTotal - aTotal;
+    });
+  }, [sortedGMs]);
+
+  if (categories.length === 0) return null;
+
+  // Find best win rate per category for highlighting
+  const bestPerCat: Record<string, number> = {};
+  categories.forEach(cat => {
+    bestPerCat[cat] = Math.max(...sortedGMs.map(gm => gm.categoryDominance[cat]?.winRate || 0));
+  });
+
+  return (
+    <Card>
+      <CardHeader title="Category Win Rates" subtitle="How often each GM wins in each stat category" />
+      <div className="overflow-x-auto">
+        <table className="w-full text-[12px]">
+          <thead>
+            <tr className="border-t border-gray-100 dark:border-white/5">
+              <th className="px-4 py-3 text-[11px] font-semibold text-gray-400 uppercase tracking-wider text-left sticky left-0 bg-white/80 dark:bg-[#1c1c1e]/80 backdrop-blur z-10 min-w-[120px]">GM</th>
+              {categories.map(cat => (
+                <th key={cat} className="px-2 py-3 text-[10px] font-semibold text-gray-400 uppercase tracking-wider text-center min-w-[60px]">
+                  {cat}
+                </th>
+              ))}
+              <th className="px-3 py-3 text-[10px] font-semibold text-gray-400 uppercase tracking-wider text-center min-w-[60px]">Total W</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rankedGMs.map(gm => {
+              const id = gm.managerGuid || gm.managerId;
+              const totalWins = Object.values(gm.categoryDominance).reduce((s, c) => s + c.wins, 0);
+              return (
+                <tr key={id} onClick={() => onSelectGM(id)} className="border-t border-gray-50 dark:border-white/5 hover:bg-gray-50/50 dark:hover:bg-white/5 cursor-pointer transition-colors">
+                  <td className="px-4 py-3 font-semibold text-gray-900 dark:text-white sticky left-0 bg-white/80 dark:bg-[#1c1c1e]/80 backdrop-blur z-10 whitespace-nowrap">{gm.managerName}</td>
+                  {categories.map(cat => {
+                    const d = gm.categoryDominance[cat];
+                    if (!d || d.total === 0) return <td key={cat} className="px-2 py-3 text-center text-gray-300 dark:text-gray-600">-</td>;
+                    const pct = d.winRate * 100;
+                    const isBest = d.winRate === bestPerCat[cat] && d.winRate > 0;
+                    const color = pct >= 55 ? 'var(--color-success)' : pct >= 45 ? 'var(--color-warning)' : 'var(--color-danger)';
+                    return (
+                      <td key={cat} className="px-2 py-3 text-center tabular-nums" title={`${d.wins}W / ${d.total} matchups`}>
+                        <span className={`text-[12px] font-semibold ${isBest ? 'underline decoration-2' : ''}`} style={{ color }}>
+                          {pct.toFixed(0)}%
+                        </span>
+                      </td>
+                    );
+                  })}
+                  <td className="px-3 py-3 text-center tabular-nums text-[13px] font-bold text-gray-900 dark:text-white">{totalWins}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <div className="px-6 py-2.5 border-t border-gray-100 dark:border-white/5 text-[11px] text-gray-400">
+        Win rate = % of matchups where GM had better stat. Best in each category is underlined. Hover for details.
+      </div>
+    </Card>
   );
 }
 
