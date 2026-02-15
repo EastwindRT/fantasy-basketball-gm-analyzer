@@ -71,14 +71,12 @@ export default function Dashboard() {
   const sortedGMs = useMemo(() => {
     if (!gmAnalytics) return [];
     const arr = Array.from(gmAnalytics.values());
-    const field = config.dataDisplay.defaultGMSortField;
-    const dir = config.dataDisplay.defaultGMSortDirection === 'asc' ? 1 : -1;
+    // Sort by GOAT titles (championships) desc, then win percentage desc
     return arr.sort((a, b) => {
-      const av = (a as any)[field] ?? 0;
-      const bv = (b as any)[field] ?? 0;
-      return (av - bv) * dir;
+      if (b.championships !== a.championships) return b.championships - a.championships;
+      return b.winPercentage - a.winPercentage;
     });
-  }, [gmAnalytics, config.dataDisplay.defaultGMSortField, config.dataDisplay.defaultGMSortDirection]);
+  }, [gmAnalytics]);
 
 
   const allSeasons = useMemo(() => {
