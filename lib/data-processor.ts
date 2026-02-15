@@ -92,6 +92,14 @@ export interface GMAnalytics {
       winRate: number;
     };
   };
+  categoryH2H: {
+    [opponentManagerId: string]: {
+      opponentName: string;
+      categories: {
+        [category: string]: { wins: number; losses: number; ties: number };
+      };
+    };
+  };
   rosterChurn: {
     avgWeeklyChanges: number;
     totalAdds: number;
@@ -194,6 +202,7 @@ export function processGMAnalytics(
             mostTraded: [],
           },
           categoryDominance: {},
+          categoryH2H: {},
           rosterChurn: {
             avgWeeklyChanges: 0,
             totalAdds: 0,
@@ -460,6 +469,14 @@ export function processGMAnalytics(
 
       // Process category wins if stats are available
       if (team1.stats && team2.stats) {
+        // Initialize per-opponent category H2H
+        if (!gm1.categoryH2H[manager2Id]) {
+          gm1.categoryH2H[manager2Id] = { opponentName: gm2.managerName, categories: {} };
+        }
+        if (!gm2.categoryH2H[manager1Id]) {
+          gm2.categoryH2H[manager1Id] = { opponentName: gm1.managerName, categories: {} };
+        }
+
         Object.keys(team1.stats).forEach((statId) => {
           const val1 = team1.stats![statId];
           const val2 = team2.stats![statId];
@@ -471,13 +488,28 @@ export function processGMAnalytics(
             gm2.categoryDominance[statId] = { wins: 0, total: 0, winRate: 0 };
           }
 
+          // Per-opponent category tracking
+          if (!gm1.categoryH2H[manager2Id].categories[statId]) {
+            gm1.categoryH2H[manager2Id].categories[statId] = { wins: 0, losses: 0, ties: 0 };
+          }
+          if (!gm2.categoryH2H[manager1Id].categories[statId]) {
+            gm2.categoryH2H[manager1Id].categories[statId] = { wins: 0, losses: 0, ties: 0 };
+          }
+
           gm1.categoryDominance[statId].total++;
           gm2.categoryDominance[statId].total++;
 
           if (val1 > val2) {
             gm1.categoryDominance[statId].wins++;
+            gm1.categoryH2H[manager2Id].categories[statId].wins++;
+            gm2.categoryH2H[manager1Id].categories[statId].losses++;
           } else if (val2 > val1) {
             gm2.categoryDominance[statId].wins++;
+            gm2.categoryH2H[manager1Id].categories[statId].wins++;
+            gm1.categoryH2H[manager2Id].categories[statId].losses++;
+          } else {
+            gm1.categoryH2H[manager2Id].categories[statId].ties++;
+            gm2.categoryH2H[manager1Id].categories[statId].ties++;
           }
         });
       }
@@ -504,6 +536,25 @@ export function processGMAnalytics(
       renamedCategories[displayName] = data;
     });
     gm.categoryDominance = renamedCategories;
+
+    // Rename stat IDs to display names in categoryH2H
+    const renamedH2H: typeof gm.categoryH2H = {};
+    Object.entries(gm.categoryH2H).forEach(([oppId, oppData]) => {
+      const renamedCats: typeof oppData.categories = {};
+      Object.entries(oppData.categories).forEach(([statId, data]) => {
+        let displayName = statId;
+        for (const seasonCats of Object.values(statCategories)) {
+          const found = seasonCats.find(c => c.stat_id === statId);
+          if (found) {
+            displayName = found.display_name || found.name;
+            break;
+          }
+        }
+        renamedCats[displayName] = data;
+      });
+      renamedH2H[oppId] = { opponentName: oppData.opponentName, categories: renamedCats };
+    });
+    gm.categoryH2H = renamedH2H;
   });
 
   // Process playoff matchups using league settings
