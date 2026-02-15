@@ -42,7 +42,6 @@ export interface DataDisplayConfig {
   defaultGMSortDirection: 'asc' | 'desc';
   chartPreferences: {
     rankingTrends: 'line' | 'area';
-    draftBoard: 'bar' | 'table-only';
     playoffRecord: 'bar' | 'pie';
   };
   itemsPerPage: number;
@@ -125,23 +124,6 @@ export const DEFAULT_CONFIG: AdminSettings = {
         itemsPerPage: 0,
       }],
     },
-    {
-      key: 'draft', label: 'Draft', visible: true, order: 4,
-      tables: [{
-        id: 'draft-board',
-        label: 'Draft Board',
-        columns: [
-          { key: 'rank', label: '#', visible: true, order: 0 },
-          { key: 'player', label: 'Player', visible: true, order: 1 },
-          { key: 'drafted', label: 'Drafted', visible: true, order: 2 },
-          { key: 'by', label: 'By', visible: true, order: 3 },
-          { key: 'seasons', label: 'Seasons', visible: true, order: 4 },
-        ],
-        defaultSortColumn: 'drafted',
-        defaultSortDirection: 'desc',
-        itemsPerPage: 20,
-      }],
-    },
   ],
   theme: {
     primaryColor: '#007AFF',
@@ -162,7 +144,6 @@ export const DEFAULT_CONFIG: AdminSettings = {
     defaultGMSortDirection: 'asc',
     chartPreferences: {
       rankingTrends: 'line',
-      draftBoard: 'bar',
       playoffRecord: 'bar',
     },
     itemsPerPage: 20,

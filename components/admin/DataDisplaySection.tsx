@@ -91,16 +91,6 @@ export default function DataDisplaySection({ dataDisplay, onChange }: DataDispla
         />
 
         <SelectInput
-          label="Draft Board"
-          value={dataDisplay.chartPreferences.draftBoard}
-          options={[
-            { value: 'bar', label: 'Bar Chart' },
-            { value: 'table-only', label: 'Table Only' },
-          ]}
-          onChange={v => update({ chartPreferences: { ...dataDisplay.chartPreferences, draftBoard: v } })}
-        />
-
-        <SelectInput
           label="Playoff Record"
           value={dataDisplay.chartPreferences.playoffRecord}
           options={[

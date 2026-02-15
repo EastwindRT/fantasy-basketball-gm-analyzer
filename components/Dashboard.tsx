@@ -6,14 +6,14 @@
  */
 
 import { useAppStore } from '@/lib/store';
-import { GMAnalytics, getMostDraftedPlayers } from '@/lib/data-processor';
+import { GMAnalytics } from '@/lib/data-processor';
 import { useMemo, useState } from 'react';
 import React from 'react';
 import { LineChart, Line, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell } from 'recharts';
 import { useAdminConfig } from '@/lib/AdminConfigContext';
 import { getVisibleColumns, formatPct } from '@/lib/admin-config';
 
-type DashboardTab = 'overview' | 'seasons' | 'playoffs' | 'h2h' | 'draft';
+type DashboardTab = 'overview' | 'seasons' | 'playoffs' | 'h2h';
 
 const COLORS = ['#007AFF', '#FF3B30', '#34C759', '#FF9500', '#AF52DE', '#FF2D55', '#5AC8FA', '#FF6B35', '#5856D6', '#30D158', '#64D2FF', '#BF5AF2'];
 
@@ -80,7 +80,6 @@ export default function Dashboard() {
     });
   }, [gmAnalytics, config.dataDisplay.defaultGMSortField, config.dataDisplay.defaultGMSortDirection]);
 
-  const mostDrafted = useMemo(() => gmAnalytics ? getMostDraftedPlayers(gmAnalytics) : [], [gmAnalytics]);
 
   const allSeasons = useMemo(() => {
     const s = new Set<string>();
@@ -163,7 +162,6 @@ export default function Dashboard() {
       {currentTab === 'seasons' && <SeasonsTab sortedGMs={sortedGMs} allSeasons={allSeasons} onSelectGM={setSelectedGM} />}
       {currentTab === 'playoffs' && <PlayoffsTab sortedGMs={sortedGMs} allSeasons={allSeasons} onSelectGM={setSelectedGM} />}
       {currentTab === 'h2h' && <HeadToHeadTab sortedGMs={sortedGMs} onSelectGM={setSelectedGM} />}
-      {currentTab === 'draft' && <DraftTab mostDrafted={mostDrafted} sortedGMs={sortedGMs} onSelectGM={setSelectedGM} />}
     </div>
   );
 }
@@ -748,139 +746,4 @@ function HeadToHeadTab({ sortedGMs, onSelectGM }: { sortedGMs: GMAnalytics[]; on
   );
 }
 
-// ============================================================================
-// DRAFT
-// ============================================================================
-
-function DraftTab({ mostDrafted, sortedGMs, onSelectGM }: { mostDrafted: ReturnType<typeof getMostDraftedPlayers>; sortedGMs: GMAnalytics[]; onSelectGM: (id: string) => void }) {
-  const config = useAdminConfig();
-  const showChart = config.dataDisplay.chartPreferences.draftBoard !== 'table-only';
-  const itemsPerPage = config.dataDisplay.itemsPerPage || 20;
-
-  // Check if this is an auction league (any player has cost > 0)
-  const isAuction = mostDrafted.some(p => p.maxCost > 0);
-
-  // Most expensive players (auction leagues)
-  const mostExpensive = useMemo(() => {
-    if (!isAuction) return [];
-    return [...mostDrafted].sort((a, b) => b.maxCost - a.maxCost).slice(0, 15);
-  }, [mostDrafted, isAuction]);
-
-  // Most rostered: players drafted by the most different managers
-  const mostRostered = useMemo(() => {
-    return [...mostDrafted].sort((a, b) => {
-      if (b.managers.length !== a.managers.length) return b.managers.length - a.managers.length;
-      return b.count - a.count;
-    }).slice(0, 15);
-  }, [mostDrafted]);
-
-  const chartSource = isAuction ? mostExpensive : mostRostered;
-  const chartData = useMemo(() => chartSource.map(p => ({
-    name: p.playerName.length > 18 ? p.playerName.slice(0, 17) + '.' : p.playerName,
-    fullName: p.playerName,
-    value: isAuction ? p.maxCost : p.managers.length,
-    count: p.count,
-  })), [chartSource, isAuction]);
-
-  return (
-    <div className="space-y-5">
-      {showChart && chartData.length > 0 && (
-        <Card className="p-6">
-          <h3 className="text-[17px] font-semibold text-gray-900 dark:text-white mb-1">
-            {isAuction ? 'Most Expensive Draft Picks' : 'Most Rostered Players'}
-          </h3>
-          <p className="text-[13px] text-gray-400 mb-5">
-            {isAuction ? 'Highest auction costs across all seasons' : 'Players drafted by the most different GMs'}
-          </p>
-          <ResponsiveContainer width="100%" height={Math.max(280, chartData.length * 28)}>
-            <BarChart data={chartData} layout="vertical" margin={{ left: 10, right: 20 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" opacity={0.3} />
-              <XAxis type="number" stroke="#9ca3af" style={{ fontSize: '11px' }} />
-              <YAxis type="category" dataKey="name" stroke="#9ca3af" style={{ fontSize: '11px' }} width={140} />
-              <Tooltip
-                contentStyle={{ backgroundColor: '#1c1c1e', border: 'none', borderRadius: '12px', color: '#fff', fontSize: '12px' }}
-                formatter={(v: number) => [isAuction ? `$${v}` : `${v} GMs`, isAuction ? 'Cost' : 'Rostered By']}
-                labelFormatter={(l: string) => chartData.find(d => d.name === l)?.fullName || l}
-              />
-              <Bar dataKey="value" fill="var(--color-primary)" name={isAuction ? 'Auction Cost' : 'GMs Who Drafted'} radius={[0, 6, 6, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        </Card>
-      )}
-
-      {/* Most Expensive (auction leagues) */}
-      {isAuction && mostExpensive.length > 0 && (
-        <Card>
-          <CardHeader title="Most Expensive Picks" subtitle="Highest auction prices paid" />
-          <div className="overflow-x-auto">
-            <table className="w-full text-[13px]">
-              <thead>
-                <tr className="border-t border-gray-100 dark:border-white/5">
-                  <th className="px-4 py-3 text-[11px] font-semibold text-gray-400 uppercase tracking-wider text-left">#</th>
-                  <th className="px-4 py-3 text-[11px] font-semibold text-gray-400 uppercase tracking-wider text-left">Player</th>
-                  <th className="px-4 py-3 text-[11px] font-semibold text-gray-400 uppercase tracking-wider text-left">Max Cost</th>
-                  <th className="px-4 py-3 text-[11px] font-semibold text-gray-400 uppercase tracking-wider text-left">Avg Cost</th>
-                  <th className="px-4 py-3 text-[11px] font-semibold text-gray-400 uppercase tracking-wider text-left">Drafted</th>
-                  <th className="px-4 py-3 text-[11px] font-semibold text-gray-400 uppercase tracking-wider text-left">By</th>
-                </tr>
-              </thead>
-              <tbody>
-                {mostExpensive.slice(0, itemsPerPage).map((p, i) => (
-                  <tr key={p.playerKey} className="border-t border-gray-50 dark:border-white/5 hover:bg-gray-50/50 dark:hover:bg-white/5 transition-colors">
-                    <td className="px-4 py-3 text-gray-400 font-medium">{i + 1}</td>
-                    <td className="px-4 py-3 font-semibold text-gray-900 dark:text-white">{p.playerName}</td>
-                    <td className="px-4 py-3 font-bold" style={{ color: 'var(--color-warning)' }}>${p.maxCost}</td>
-                    <td className="px-4 py-3 tabular-nums text-gray-500">${p.avgCost}</td>
-                    <td className="px-4 py-3">
-                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold" style={{ backgroundColor: 'color-mix(in srgb, var(--color-primary) 10%, transparent)', color: 'var(--color-primary)' }}>{p.count}x</span>
-                    </td>
-                    <td className="px-4 py-3 text-gray-500 text-[12px]">{p.managers.join(', ')}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </Card>
-      )}
-
-      {/* Most Rostered Players */}
-      <Card>
-        <CardHeader title="Most Rostered Players" subtitle="Players drafted by the most different GMs across seasons" />
-        <div className="overflow-x-auto">
-          <table className="w-full text-[13px]">
-            <thead>
-              <tr className="border-t border-gray-100 dark:border-white/5">
-                <th className="px-4 py-3 text-[11px] font-semibold text-gray-400 uppercase tracking-wider text-left">#</th>
-                <th className="px-4 py-3 text-[11px] font-semibold text-gray-400 uppercase tracking-wider text-left">Player</th>
-                <th className="px-4 py-3 text-[11px] font-semibold text-gray-400 uppercase tracking-wider text-left">GMs</th>
-                <th className="px-4 py-3 text-[11px] font-semibold text-gray-400 uppercase tracking-wider text-left">Times Drafted</th>
-                {isAuction && <th className="px-4 py-3 text-[11px] font-semibold text-gray-400 uppercase tracking-wider text-left">Avg Cost</th>}
-                <th className="px-4 py-3 text-[11px] font-semibold text-gray-400 uppercase tracking-wider text-left">Seasons</th>
-                <th className="px-4 py-3 text-[11px] font-semibold text-gray-400 uppercase tracking-wider text-left">Drafted By</th>
-              </tr>
-            </thead>
-            <tbody>
-              {mostRostered.slice(0, itemsPerPage).map((p, i) => (
-                <tr key={p.playerKey} className="border-t border-gray-50 dark:border-white/5 hover:bg-gray-50/50 dark:hover:bg-white/5 transition-colors">
-                  <td className="px-4 py-3 text-gray-400 font-medium">{i + 1}</td>
-                  <td className="px-4 py-3 font-semibold text-gray-900 dark:text-white">{p.playerName}</td>
-                  <td className="px-4 py-3">
-                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold" style={{ backgroundColor: 'color-mix(in srgb, var(--color-success) 10%, transparent)', color: 'var(--color-success)' }}>{p.managers.length}</span>
-                  </td>
-                  <td className="px-4 py-3">
-                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold" style={{ backgroundColor: 'color-mix(in srgb, var(--color-primary) 10%, transparent)', color: 'var(--color-primary)' }}>{p.count}x</span>
-                  </td>
-                  {isAuction && <td className="px-4 py-3 tabular-nums text-gray-500 font-medium">${p.avgCost}</td>}
-                  <td className="px-4 py-3 text-gray-400 text-[12px]">{p.seasons.join(', ')}</td>
-                  <td className="px-4 py-3 text-gray-500 text-[12px]">{p.managers.join(', ')}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        {!mostDrafted.length && <div className="p-12 text-center text-gray-400">No draft data available</div>}
-      </Card>
-    </div>
-  );
-}
 
