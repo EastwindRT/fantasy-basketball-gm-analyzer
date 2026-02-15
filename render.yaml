@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: fantasy-basketball-gm-analyzer
+    runtime: node
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npm run start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NEXT_PUBLIC_YAHOO_CLIENT_ID
+        sync: false
+      - key: NEXT_PUBLIC_YAHOO_CLIENT_SECRET
+        sync: false
+      - key: YAHOO_CLIENT_ID
+        sync: false
+      - key: YAHOO_CLIENT_SECRET
+        sync: false

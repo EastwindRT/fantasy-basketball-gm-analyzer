@@ -1,0 +1,196 @@
+export interface ColumnConfig {
+  key: string;
+  label: string;
+  visible: boolean;
+  order: number;
+}
+
+export interface TableConfig {
+  id: string;
+  label: string;
+  columns: ColumnConfig[];
+  defaultSortColumn: string;
+  defaultSortDirection: 'asc' | 'desc';
+  itemsPerPage: number;
+}
+
+export interface TabConfig {
+  key: string;
+  label: string;
+  visible: boolean;
+  order: number;
+  tables: TableConfig[];
+}
+
+export interface ThemeConfig {
+  primaryColor: string;
+  accentColor: string;
+  successColor: string;
+  dangerColor: string;
+  warningColor: string;
+  cardBorderRadius: number;
+  shadowIntensity: 'none' | 'light' | 'medium' | 'heavy';
+  fontSizeScale: 'compact' | 'normal' | 'large';
+  darkModeDefault: 'on' | 'off' | 'system';
+  backgroundStyle: 'plain' | 'gradient' | 'subtle-pattern';
+}
+
+export interface DataDisplayConfig {
+  defaultSeasons: number;
+  decimalPlaces: number;
+  defaultGMSortField: string;
+  defaultGMSortDirection: 'asc' | 'desc';
+  chartPreferences: {
+    rankingTrends: 'line' | 'area';
+    draftBoard: 'bar' | 'table-only';
+    playoffRecord: 'bar' | 'pie';
+  };
+  itemsPerPage: number;
+}
+
+export interface AdminSettings {
+  version: number;
+  tabs: TabConfig[];
+  theme: ThemeConfig;
+  dataDisplay: DataDisplayConfig;
+}
+
+export const DEFAULT_CONFIG: AdminSettings = {
+  version: 1,
+  tabs: [
+    {
+      key: 'overview', label: 'Overview', visible: true, order: 0,
+      tables: [{
+        id: 'overview-power-rankings',
+        label: 'Power Rankings',
+        columns: [
+          { key: 'rank', label: '#', visible: true, order: 0 },
+          { key: 'gm', label: 'GM', visible: true, order: 1 },
+          { key: 'avgRank', label: 'Avg Rank', visible: true, order: 2 },
+          { key: 'record', label: 'Record', visible: true, order: 3 },
+          { key: 'winPct', label: 'Win%', visible: true, order: 4 },
+          { key: 'bestWorst', label: 'Best / Worst', visible: true, order: 5 },
+          { key: 'playoffs', label: 'Playoffs', visible: true, order: 6 },
+          { key: 'titles', label: 'GOAT Titles', visible: true, order: 7 },
+          { key: 'trend', label: 'Trend', visible: true, order: 8 },
+        ],
+        defaultSortColumn: 'avgRank',
+        defaultSortDirection: 'asc',
+        itemsPerPage: 0,
+      }],
+    },
+    {
+      key: 'seasons', label: 'Seasons', visible: true, order: 1,
+      tables: [{
+        id: 'seasons-breakdown',
+        label: 'Season-by-Season Breakdown',
+        columns: [
+          { key: 'gm', label: 'GM', visible: true, order: 0 },
+          { key: 'seasonRank', label: 'Rank', visible: true, order: 1 },
+          { key: 'seasonRecord', label: 'W-L', visible: true, order: 2 },
+        ],
+        defaultSortColumn: 'gm',
+        defaultSortDirection: 'asc',
+        itemsPerPage: 0,
+      }],
+    },
+    {
+      key: 'playoffs', label: 'Playoffs', visible: true, order: 2,
+      tables: [{
+        id: 'playoffs-power-rankings',
+        label: 'Playoff Power Rankings',
+        columns: [
+          { key: 'rank', label: '#', visible: true, order: 0 },
+          { key: 'gm', label: 'GM', visible: true, order: 1 },
+          { key: 'titles', label: 'GOAT Titles', visible: true, order: 2 },
+          { key: 'finals', label: 'Finals', visible: true, order: 3 },
+          { key: 'playoffApps', label: 'Playoff Apps', visible: true, order: 4 },
+          { key: 'playoffRecord', label: 'Playoff Record', visible: true, order: 5 },
+          { key: 'winPct', label: 'Win%', visible: true, order: 6 },
+          { key: 'bestSeed', label: 'Best Seed', visible: true, order: 7 },
+        ],
+        defaultSortColumn: 'titles',
+        defaultSortDirection: 'desc',
+        itemsPerPage: 0,
+      }],
+    },
+    {
+      key: 'h2h', label: 'Head-to-Head', visible: true, order: 3,
+      tables: [{
+        id: 'h2h-matrix',
+        label: 'Head-to-Head Matrix',
+        columns: [],
+        defaultSortColumn: 'gm',
+        defaultSortDirection: 'asc',
+        itemsPerPage: 0,
+      }],
+    },
+    {
+      key: 'draft', label: 'Draft', visible: true, order: 4,
+      tables: [{
+        id: 'draft-board',
+        label: 'Draft Board',
+        columns: [
+          { key: 'rank', label: '#', visible: true, order: 0 },
+          { key: 'player', label: 'Player', visible: true, order: 1 },
+          { key: 'drafted', label: 'Drafted', visible: true, order: 2 },
+          { key: 'by', label: 'By', visible: true, order: 3 },
+          { key: 'seasons', label: 'Seasons', visible: true, order: 4 },
+        ],
+        defaultSortColumn: 'drafted',
+        defaultSortDirection: 'desc',
+        itemsPerPage: 20,
+      }],
+    },
+  ],
+  theme: {
+    primaryColor: '#007AFF',
+    accentColor: '#5856D6',
+    successColor: '#34C759',
+    dangerColor: '#FF3B30',
+    warningColor: '#FF9500',
+    cardBorderRadius: 16,
+    shadowIntensity: 'light',
+    fontSizeScale: 'normal',
+    darkModeDefault: 'system',
+    backgroundStyle: 'plain',
+  },
+  dataDisplay: {
+    defaultSeasons: 5,
+    decimalPlaces: 1,
+    defaultGMSortField: 'overallRanking',
+    defaultGMSortDirection: 'asc',
+    chartPreferences: {
+      rankingTrends: 'line',
+      draftBoard: 'bar',
+      playoffRecord: 'bar',
+    },
+    itemsPerPage: 20,
+  },
+};
+
+export function getVisibleColumns(tableId: string, config: AdminSettings): ColumnConfig[] {
+  for (const tab of config.tabs) {
+    for (const table of tab.tables) {
+      if (table.id === tableId) {
+        return table.columns
+          .filter(c => c.visible)
+          .sort((a, b) => a.order - b.order);
+      }
+    }
+  }
+  return [];
+}
+
+export function getTableConfig(tableId: string, config: AdminSettings): TableConfig | null {
+  for (const tab of config.tabs) {
+    for (const table of tab.tables) {
+      if (table.id === tableId) return table;
+    }
+  }
+  return null;
+}
+
+export function formatPct(value: number, config: DataDisplayConfig): string {
+  return (value * 100).toFixed(config.decimalPlaces) + '%';
+}

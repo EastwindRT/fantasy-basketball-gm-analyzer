@@ -28,17 +28,31 @@ Yahoo redirect URI should be set to: `https://localhost:3001/api/auth/callback`
 ### Working Features
 - Yahoo OAuth authentication with account switching
 - League discovery (auto-find user's leagues)
-- Standings data with wins/losses/ties
+- Standings data with wins/losses/ties and win percentage
 - Draft picks display with round/pick info (grouped by season)
-- Head-to-head records
+- Head-to-head records with full matrix view
 - Category dominance charts
-- Roster churn stats
+- Roster churn stats with stacked bar charts
 - Data caching (IndexedDB with 24hr expiration for historical data)
+- **Comprehensive tabbed Dashboard** with 5 tabs:
+  - Overview: Power rankings table, all-GMs ranking trend chart, GM cards
+  - Seasons: Season-by-season breakdown grid, champion history
+  - Head-to-Head: Full H2H matrix with color coding, top rivalries
+  - Draft Board: Most drafted players chart + detailed table
+  - Activity: Roster activity stacked bar chart, trade summary
+- Parallel API fetches per season (standings, transactions, drafts, categories fetched simultaneously)
+- Default 5-year analysis window
 
-### Recent Bug Fixes (January 2025)
-1. **Stats showing zero** - Fixed falsy value check in `lib/yahoo-api.ts:862-868` that treated `0` wins/losses as missing data. Changed from `?` operator to `!= null` checks.
+### Recent Bug Fixes (February 2026)
+1. **Stats showing zero** - Fixed falsy value check in `lib/yahoo-api.ts` that treated `0` wins/losses as missing data. Changed from `?` operator to `!= null` checks.
 2. **Standings extraction** - Made code search for `team_standings` in all array positions (Yahoo API structure varies)
 3. **Draft Picks** - Changed from "Most Drafted" aggregation to showing individual draft picks with round/pick/season
+4. **Transaction type `add/drop`** - Yahoo uses combined `add/drop` transaction type; now properly checks per-player `transaction_data.type` field
+5. **bestFinish Infinity bug** - Fixed `bestFinish` being set to `Infinity` initially; now uses `Math.min(...ranks)` after all seasons collected
+6. **seasonLeagueKeys missing dep** - Added `seasonLeagueKeys` to useEffect dependency array in page.tsx
+7. **Token in URL** - Removed access token from URL query string (security); token now sent only via Authorization header
+8. **yahoo-fantasy package** - Removed broken `yahoo-fantasy` npm package usage from API routes; using direct axios calls instead
+9. **Type errors** - Fixed `YahooAuthState` type annotations in AuthDebug, AuthStatus, InputForm
 
 ### Known Issues / TODO
 

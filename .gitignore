@@ -39,6 +39,7 @@ next-env.d.ts
 
 
 certificates
+nul
 
 # claude session files (not CLAUDE.md which has project docs)
 .claude/

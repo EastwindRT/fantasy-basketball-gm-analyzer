@@ -5,6 +5,14 @@
 :root {
   --background: #ffffff;
   --foreground: #171717;
+  --color-primary: #007AFF;
+  --color-accent: #5856D6;
+  --color-success: #34C759;
+  --color-danger: #FF3B30;
+  --color-warning: #FF9500;
+  --card-border-radius: 16px;
+  --card-shadow: 0 1px 3px rgba(0,0,0,0.1);
+  --base-font-size: 16px;
 }
 
 @media (prefers-color-scheme: dark) {

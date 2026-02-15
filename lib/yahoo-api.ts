@@ -236,7 +236,7 @@ export interface TeamData {
 export interface TransactionData {
   transaction_key: string;
   transaction_id: string;
-  type: 'add' | 'drop' | 'trade' | 'commish' | 'waiver' | 'draft';
+  type: 'add' | 'drop' | 'add/drop' | 'trade' | 'commish' | 'waiver' | 'draft';
   status: string;
   timestamp: number;
   players?: Array<{
@@ -246,7 +246,7 @@ export interface TransactionData {
       full: string;
     };
     transaction_data: {
-      type: string;
+      type: 'add' | 'drop' | 'trade' | string;
       source_team_key?: string;
       destination_team_key?: string;
     };
@@ -256,6 +256,7 @@ export interface TransactionData {
 export interface DraftResult {
   pick: number;
   round: number;
+  cost: number;
   team_key: string;
   player_key: string;
   player_name: string;
@@ -498,7 +499,8 @@ async function apiRequest(endpoint: string, retryCount: number = 0): Promise<any
   const normalizedEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
 
   // Use Next.js API route to proxy the request (avoids CORS)
-  const url = `/api/yahoo/fetch?endpoint=${encodeURIComponent(normalizedEndpoint)}&token=${encodeURIComponent(token)}`;
+  // Token is sent via Authorization header only (not in URL for security)
+  const url = `/api/yahoo/fetch?endpoint=${encodeURIComponent(normalizedEndpoint)}`;
 
   console.log('Making API request:', {
     endpoint: normalizedEndpoint,
@@ -961,13 +963,17 @@ export async function fetchTransactions(leagueKey: string, transactionTypes?: st
                 if (item?.name?.full) playerName = item.name.full;
               });
 
-              const transactionData = playerArray[1]?.transaction_data || {};
+              const transactionData = playerArray[1]?.transaction_data || playerArray[1] || {};
 
               players.push({
                 player_key: playerKey,
                 player_id: playerId,
                 name: { full: playerName },
-                transaction_data: transactionData,
+                transaction_data: {
+                  type: transactionData.type || '',
+                  source_team_key: transactionData.source_team_key || undefined,
+                  destination_team_key: transactionData.destination_team_key || undefined,
+                },
               });
             } catch (e) {
               console.warn('Failed to parse player in transaction:', e);
@@ -1000,9 +1006,9 @@ export async function fetchTransactions(leagueKey: string, transactionTypes?: st
  */
 export async function fetchDraftResults(leagueKey: string): Promise<DraftResult[]> {
   try {
-    const data = await apiRequest(`/leagues;league_keys=${leagueKey}/draftresults`);
+    // Use /players sub-resource to get player names with draft results
+    const data = await apiRequest(`/leagues;league_keys=${leagueKey}/draftresults/players`);
 
-    // Defensive parsing
     const leagueData = data?.fantasy_content?.leagues?.[0]?.league;
     if (!leagueData) return [];
 
@@ -1016,12 +1022,38 @@ export async function fetchDraftResults(leagueKey: string): Promise<DraftResult[
 
       try {
         const draftResult = dr.draft_result;
+        // Extract player name from the nested players sub-resource
+        let playerName = '';
+        const players = draftResult.players;
+        if (players) {
+          // players is an object with numeric keys and a 'count' key
+          Object.entries(players).forEach(([pKey, pVal]: [string, any]) => {
+            if (pKey === 'count') return;
+            const player = pVal?.player;
+            if (player && Array.isArray(player)) {
+              // player[0] is an array of player info objects
+              const playerInfo = Array.isArray(player[0]) ? player[0] : [player[0]];
+              playerInfo.forEach((item: any) => {
+                if (item?.name?.full) playerName = item.name.full;
+              });
+            }
+          });
+        }
+
+        // Also check for player_name directly in the draft result (some API versions)
+        if (!playerName && draftResult.player_name) {
+          playerName = draftResult.player_name;
+        }
+
+        const cost = parseFloat(draftResult.cost || '0');
+
         result.push({
           pick: parseInt(draftResult.pick || '0', 10),
           round: parseInt(draftResult.round || '0', 10),
+          cost,
           team_key: draftResult.team_key || '',
           player_key: draftResult.player_key || '',
-          player_name: '', // Will be populated later if needed
+          player_name: playerName || draftResult.player_key || '',
         });
       } catch (e) {
         console.warn('Failed to parse draft result:', key, e);
@@ -1030,8 +1062,32 @@ export async function fetchDraftResults(leagueKey: string): Promise<DraftResult[
 
     return result;
   } catch (error) {
-    console.warn('Failed to fetch draft results:', error);
-    return [];
+    // Fallback: try without /players if the sub-resource isn't supported
+    console.warn('Draft results with players failed, trying without:', error);
+    try {
+      const data = await apiRequest(`/leagues;league_keys=${leagueKey}/draftresults`);
+      const leagueData = data?.fantasy_content?.leagues?.[0]?.league;
+      if (!leagueData) return [];
+      const draftResults = Array.isArray(leagueData) ? leagueData[1]?.draft_results : leagueData.draft_results;
+      if (!draftResults) return [];
+      const result: DraftResult[] = [];
+      Object.entries(draftResults).forEach(([key, dr]: [string, any]) => {
+        if (key === 'count' || !dr?.draft_result) return;
+        const draftResult = dr.draft_result;
+        result.push({
+          pick: parseInt(draftResult.pick || '0', 10),
+          round: parseInt(draftResult.round || '0', 10),
+          cost: parseFloat(draftResult.cost || '0'),
+          team_key: draftResult.team_key || '',
+          player_key: draftResult.player_key || '',
+          player_name: draftResult.player_name || draftResult.player_key || '',
+        });
+      });
+      return result;
+    } catch (fallbackError) {
+      console.warn('Failed to fetch draft results:', fallbackError);
+      return [];
+    }
   }
 }
 
@@ -1147,6 +1203,79 @@ export async function fetchAllMatchups(leagueKey: string, startWeek: number = 1,
 export async function fetchSettings(leagueKey: string): Promise<any> {
   const data = await apiRequest(`/leagues;league_keys=${leagueKey}/settings`);
   return data;
+}
+
+/**
+ * Playoff/league settings info
+ */
+export interface LeagueSettings {
+  playoff_start_week: number;
+  num_playoff_teams: number;
+  num_playoff_consolation_teams: number;
+  has_playoff_consolation_games: boolean;
+  uses_playoff_reseeding: boolean;
+  end_week: number;
+  start_week: number;
+}
+
+/**
+ * Fetch league playoff settings
+ */
+export async function fetchLeagueSettings(leagueKey: string): Promise<LeagueSettings> {
+  const defaultSettings: LeagueSettings = { playoff_start_week: 0, num_playoff_teams: 0, num_playoff_consolation_teams: 0, has_playoff_consolation_games: false, uses_playoff_reseeding: false, end_week: 25, start_week: 1 };
+  try {
+    const data = await apiRequest(`/leagues;league_keys=${leagueKey}/settings`);
+
+    const leagueData = data?.fantasy_content?.leagues?.[0]?.league;
+    if (!leagueData) return defaultSettings;
+
+    // Yahoo API returns league as array: [leagueInfo, {settings: [...]}]
+    const leagueInfo = Array.isArray(leagueData) ? leagueData[0] : leagueData;
+    const settingsContainer = Array.isArray(leagueData) ? leagueData[1] : null;
+    const settingsData = settingsContainer?.settings;
+    const settings = Array.isArray(settingsData) ? settingsData[0] : (settingsData || {});
+
+    // Helper to find a field across multiple locations
+    const findField = (field: string): string => {
+      return settings?.[field] || leagueInfo?.[field] || '';
+    };
+
+    const endWeek = parseInt(findField('end_week') || '25', 10);
+    const startWeek = parseInt(findField('start_week') || '1', 10);
+    let playoffStartWeek = parseInt(findField('playoff_start_week') || '0', 10);
+    let numPlayoffTeams = parseInt(findField('num_playoff_teams') || '0', 10);
+
+    // If Yahoo didn't provide playoff_start_week, estimate from end_week
+    // NBA fantasy typically has 3 playoff weeks at the end of the season
+    if (playoffStartWeek === 0 && endWeek > 0) {
+      playoffStartWeek = endWeek - 2; // Assume 3 playoff weeks (QF, SF, F)
+      console.log(`Estimated playoff_start_week=${playoffStartWeek} from end_week=${endWeek}`);
+    }
+
+    // If num_playoff_teams not provided, default to common formats
+    if (numPlayoffTeams === 0) {
+      const numTeams = parseInt(leagueInfo?.num_teams || '0', 10);
+      if (numTeams > 0) {
+        // Standard: top half or 6 teams make playoffs
+        numPlayoffTeams = Math.min(numTeams, numTeams <= 8 ? 4 : 6);
+      }
+    }
+
+    console.log(`League settings for ${leagueKey}: playoff_start=${playoffStartWeek}, end=${endWeek}, playoff_teams=${numPlayoffTeams}`);
+
+    return {
+      playoff_start_week: playoffStartWeek,
+      num_playoff_teams: numPlayoffTeams,
+      num_playoff_consolation_teams: parseInt(findField('num_playoff_consolation_teams') || '0', 10),
+      has_playoff_consolation_games: findField('has_playoff_consolation_games') === '1' || findField('has_playoff_consolation_games') === 'true',
+      uses_playoff_reseeding: findField('uses_playoff_reseeding') === '1' || findField('uses_playoff_reseeding') === 'true',
+      end_week: endWeek,
+      start_week: startWeek,
+    };
+  } catch (error) {
+    console.warn('Failed to fetch league settings:', error);
+    return defaultSettings;
+  }
 }
 
 /**

@@ -4,7 +4,16 @@
  * Processes raw Yahoo API data into GM-focused statistics and insights.
  */
 
-import { TeamData, TransactionData, DraftResult, MatchupData } from './yahoo-api';
+import { TeamData, TransactionData, DraftResult, MatchupData, LeagueSettings } from './yahoo-api';
+
+export interface PlayoffSeasonStats {
+  seed: number;
+  playoffWins: number;
+  playoffLosses: number;
+  eliminatedRound: string; // 'Quarterfinals', 'Semifinals', 'Finals', 'Champion', or week number
+  finalsAppearance: boolean;
+  champion: boolean;
+}
 
 export interface GMAnalytics {
   teamKey: string;
@@ -22,6 +31,7 @@ export interface GMAnalytics {
       playoffAppearance: boolean;
       championship: boolean;
       teamKey: string;
+      playoff?: PlayoffSeasonStats;
     };
   };
   overallRanking: number;
@@ -30,8 +40,16 @@ export interface GMAnalytics {
   totalWins: number;
   totalLosses: number;
   totalTies: number;
+  winPercentage: number;
   playoffAppearances: number;
   championships: number;
+  // Playoff aggregate stats
+  playoffWins: number;
+  playoffLosses: number;
+  playoffWinPercentage: number;
+  finalsAppearances: number;
+  bestPlayoffSeed: number;
+  avgPlayoffSeed: number;
   headToHead: {
     [opponentManagerId: string]: {
       opponentName: string;
@@ -46,6 +64,7 @@ export interface GMAnalytics {
       playerName: string;
       round: number;
       pick: number;
+      cost: number;
       season: string;
     }>;
     mostAdded: Array<{
@@ -100,16 +119,6 @@ export interface GMAnalytics {
   }>;
 }
 
-// Helper to normalize team keys for cross-season matching
-function normalizeTeamKey(teamKey: string): string {
-  // Extract just the team ID portion: "418.l.12345.t.1" -> "t.1"
-  const parts = teamKey.split('.');
-  if (parts.length >= 5) {
-    return `${parts[3]}.${parts[4]}`;
-  }
-  return teamKey;
-}
-
 // Helper to get manager identifier (guid is most reliable for cross-season)
 function getManagerId(team: TeamData): string {
   return team.manager.guid || team.manager.manager_id;
@@ -124,12 +133,11 @@ export function processGMAnalytics(
   matchupsBySeason: { [season: string]: MatchupData[] },
   draftResultsBySeason: { [season: string]: DraftResult[] } = {},
   statCategories: { [season: string]: Array<{ stat_id: string; name: string; display_name: string }> } = {},
-  gmUsernameFilter?: string
+  gmUsernameFilter?: string,
+  leagueSettingsBySeason: { [season: string]: LeagueSettings } = {}
 ): Map<string, GMAnalytics> {
   const gmMap = new Map<string, GMAnalytics>();
 
-  // Map to track manager guid -> team keys across seasons
-  const managerTeamKeys: Map<string, Set<string>> = new Map();
   // Map team key to manager guid
   const teamKeyToManagerId: Map<string, string> = new Map();
   // Map team key to manager name
@@ -137,20 +145,17 @@ export function processGMAnalytics(
 
   // First pass: collect all team/manager mappings
   Object.entries(teamsBySeason).forEach(([season, teams]) => {
+    if (!teams) return;
     teams.forEach((team) => {
       const managerId = getManagerId(team);
       teamKeyToManagerId.set(team.team_key, managerId);
       teamKeyToManagerName.set(team.team_key, team.manager.nickname);
-
-      if (!managerTeamKeys.has(managerId)) {
-        managerTeamKeys.set(managerId, new Set());
-      }
-      managerTeamKeys.get(managerId)!.add(team.team_key);
     });
   });
 
   // Initialize GM data structure using manager guid as key
   Object.entries(teamsBySeason).forEach(([season, teams]) => {
+    if (!teams) return;
     teams.forEach((team) => {
       const managerId = getManagerId(team);
 
@@ -167,13 +172,20 @@ export function processGMAnalytics(
           managerGuid: team.manager.guid,
           seasons: {},
           overallRanking: 0,
-          bestFinish: Infinity,
+          bestFinish: 0,
           worstFinish: 0,
           totalWins: 0,
           totalLosses: 0,
           totalTies: 0,
+          winPercentage: 0,
           playoffAppearances: 0,
           championships: 0,
+          playoffWins: 0,
+          playoffLosses: 0,
+          playoffWinPercentage: 0,
+          finalsAppearances: 0,
+          bestPlayoffSeed: 0,
+          avgPlayoffSeed: 0,
           headToHead: {},
           playerInteractions: {
             draftPicks: [],
@@ -198,7 +210,9 @@ export function processGMAnalytics(
       const gm = gmMap.get(managerId)!;
       const standings = team.standings;
       const numTeams = teams.length;
-      const isPlayoff = standings.rank <= Math.ceil(numTeams / 2);
+      const leagueSettings = leagueSettingsBySeason[season];
+      const numPlayoffTeams = leagueSettings?.num_playoff_teams || Math.ceil(numTeams / 2);
+      const isPlayoff = standings.rank <= numPlayoffTeams;
       const isChampion = standings.rank === 1;
 
       gm.seasons[season] = {
@@ -218,81 +232,79 @@ export function processGMAnalytics(
       gm.totalTies += standings.ties;
       if (isPlayoff) gm.playoffAppearances++;
       if (isChampion) gm.championships++;
-      if (standings.rank < gm.bestFinish) gm.bestFinish = standings.rank;
-      if (standings.rank > gm.worstFinish) gm.worstFinish = standings.rank;
     });
   });
 
-  // Calculate overall rankings
+  // Calculate overall rankings, best/worst finish, win percentage
   gmMap.forEach((gm) => {
     const ranks = Object.values(gm.seasons).map((s) => s.rank);
     gm.overallRanking = ranks.length > 0 ? ranks.reduce((a, b) => a + b, 0) / ranks.length : 0;
+    gm.bestFinish = ranks.length > 0 ? Math.min(...ranks) : 0;
+    gm.worstFinish = ranks.length > 0 ? Math.max(...ranks) : 0;
+
+    const totalGames = gm.totalWins + gm.totalLosses + gm.totalTies;
+    gm.winPercentage = totalGames > 0 ? gm.totalWins / totalGames : 0;
+
     gm.rankingTrend = Object.entries(gm.seasons)
       .map(([season, data]) => ({ season, rank: data.rank }))
       .sort((a, b) => a.season.localeCompare(b.season));
   });
 
-  // Process draft results - store individual picks with round/pick info
+  // Process draft results
   Object.entries(draftResultsBySeason).forEach(([season, draftResults]) => {
-    console.log(`Processing ${draftResults.length} draft results for season ${season}`);
-
+    if (!draftResults) return;
     draftResults.forEach((draft) => {
       const managerId = teamKeyToManagerId.get(draft.team_key);
-      if (!managerId) {
-        console.log(`No manager found for team_key: ${draft.team_key}`);
-        return;
-      }
+      if (!managerId) return;
 
       const gm = gmMap.get(managerId);
       if (!gm) return;
 
-      // Add this draft pick to the GM's draft picks list
       gm.playerInteractions.draftPicks.push({
         playerKey: draft.player_key,
-        playerName: draft.player_name || draft.player_key, // Use player_name if available
+        playerName: draft.player_name || draft.player_key,
         round: draft.round,
         pick: draft.pick,
+        cost: draft.cost || 0,
         season,
       });
     });
   });
 
-  // Sort draft picks by round then pick for each GM
+  // Sort draft picks by season (newest first), then round, then pick
   gmMap.forEach((gm) => {
     gm.playerInteractions.draftPicks.sort((a, b) => {
-      if (a.season !== b.season) return b.season.localeCompare(a.season); // Most recent season first
+      if (a.season !== b.season) return b.season.localeCompare(a.season);
       if (a.round !== b.round) return a.round - b.round;
       return a.pick - b.pick;
     });
   });
 
-  // Process transactions
-  const addedPlayerPerformance: Map<string, Map<string, { added: boolean; stillOnRoster: boolean; season: string }>> = new Map();
-  const tradePartnerMap: Map<string, Map<string, Set<string>>> = new Map(); // managerId -> playerKey -> Set<partnerNames>
-
+  // Process transactions - handle add, drop, add/drop (combined), trade, waiver
   Object.entries(transactionsBySeason).forEach(([season, transactions]) => {
-    console.log(`Processing ${transactions.length} transactions for season ${season}`);
-    let addCount = 0, dropCount = 0, tradeCount = 0;
+    if (!transactions) return;
 
     transactions.forEach((tx) => {
-      if (!tx.players) {
-        console.log(`Transaction ${tx.transaction_key} has no players, type: ${tx.type}`);
-        return;
-      }
+      if (!tx.players) return;
+
+      // Yahoo uses 'add/drop' as a combined type where one player is added and another dropped
+      const isAddDrop = tx.type === 'add/drop' || tx.type === 'add' || tx.type === 'waiver';
+      const isDrop = tx.type === 'drop' || tx.type === 'add/drop';
+      const isTrade = tx.type === 'trade';
 
       tx.players.forEach((player) => {
         const destTeamKey = player.transaction_data.destination_team_key;
         const srcTeamKey = player.transaction_data.source_team_key;
-
         const destManagerId = destTeamKey ? teamKeyToManagerId.get(destTeamKey) : undefined;
         const srcManagerId = srcTeamKey ? teamKeyToManagerId.get(srcTeamKey) : undefined;
-
         const playerKey = player.player_key;
         const playerName = player.name.full;
 
-        // Handle adds
-        if (tx.type === 'add') {
-          addCount++;
+        // Determine the action for this specific player within the transaction
+        const playerType = player.transaction_data.type;
+
+        // Handle adds (player was added to a team)
+        if (playerType === 'add' || (isAddDrop && destTeamKey && !srcTeamKey)) {
           if (destManagerId) {
             const gm = gmMap.get(destManagerId);
             if (gm) {
@@ -301,20 +313,14 @@ export function processGMAnalytics(
               if (existing) {
                 existing.count++;
               } else {
-                gm.playerInteractions.mostAdded.push({
-                  playerKey,
-                  playerName,
-                  count: 1,
-                  successRate: 0, // Will calculate later
-                });
+                gm.playerInteractions.mostAdded.push({ playerKey, playerName, count: 1, successRate: 0 });
               }
             }
           }
         }
 
-        // Handle drops
-        if (tx.type === 'drop') {
-          dropCount++;
+        // Handle drops (player was dropped from a team)
+        if (playerType === 'drop' || (isDrop && srcTeamKey && !destTeamKey)) {
           if (srcManagerId) {
             const gm = gmMap.get(srcManagerId);
             if (gm) {
@@ -323,74 +329,47 @@ export function processGMAnalytics(
               if (existing) {
                 existing.count++;
               } else {
-                gm.playerInteractions.mostDropped.push({
-                  playerKey,
-                  playerName,
-                  count: 1,
-                });
+                gm.playerInteractions.mostDropped.push({ playerKey, playerName, count: 1 });
               }
             }
           }
         }
 
         // Handle trades
-        if (tx.type === 'trade') {
-          tradeCount++;
-          // Track for destination team
+        if (isTrade) {
           if (destManagerId) {
             const gm = gmMap.get(destManagerId);
             if (gm) {
               gm.rosterChurn.totalTrades++;
-
               const existing = gm.playerInteractions.mostTraded.find((p) => p.playerKey === playerKey);
               const partnerName = srcTeamKey ? teamKeyToManagerName.get(srcTeamKey) || 'Unknown' : 'Unknown';
-
               if (existing) {
                 existing.count++;
-                if (!existing.tradePartners.includes(partnerName)) {
-                  existing.tradePartners.push(partnerName);
-                }
+                if (!existing.tradePartners.includes(partnerName)) existing.tradePartners.push(partnerName);
               } else {
-                gm.playerInteractions.mostTraded.push({
-                  playerKey,
-                  playerName,
-                  count: 1,
-                  tradePartners: [partnerName],
-                });
+                gm.playerInteractions.mostTraded.push({ playerKey, playerName, count: 1, tradePartners: [partnerName] });
               }
             }
           }
-
-          // Track for source team too (they traded away)
           if (srcManagerId) {
             const gm = gmMap.get(srcManagerId);
             if (gm) {
-              // Don't double count trades
               const existing = gm.playerInteractions.mostTraded.find((p) => p.playerKey === playerKey);
               const partnerName = destTeamKey ? teamKeyToManagerName.get(destTeamKey) || 'Unknown' : 'Unknown';
-
               if (existing) {
                 existing.count++;
-                if (!existing.tradePartners.includes(partnerName)) {
-                  existing.tradePartners.push(partnerName);
-                }
+                if (!existing.tradePartners.includes(partnerName)) existing.tradePartners.push(partnerName);
               } else {
-                gm.playerInteractions.mostTraded.push({
-                  playerKey,
-                  playerName,
-                  count: 1,
-                  tradePartners: [partnerName],
-                });
+                gm.playerInteractions.mostTraded.push({ playerKey, playerName, count: 1, tradePartners: [partnerName] });
               }
             }
           }
         }
       });
     });
-    console.log(`Season ${season} transaction counts - Adds: ${addCount}, Drops: ${dropCount}, Trades: ${tradeCount}`);
   });
 
-  // Sort and limit player interactions
+  // Sort and limit player interactions, calculate derived stats
   gmMap.forEach((gm) => {
     gm.playerInteractions.mostAdded.sort((a, b) => b.count - a.count);
     gm.playerInteractions.mostAdded = gm.playerInteractions.mostAdded.slice(0, 10);
@@ -405,14 +384,12 @@ export function processGMAnalytics(
     const totalSeasons = Object.keys(gm.seasons).length;
     const estimatedWeeksPerSeason = 20;
     const totalChanges = gm.rosterChurn.totalAdds + gm.rosterChurn.totalDrops + gm.rosterChurn.totalTrades;
-    gm.rosterChurn.avgWeeklyChanges = totalSeasons > 0 && estimatedWeeksPerSeason > 0
+    gm.rosterChurn.avgWeeklyChanges = totalSeasons > 0
       ? totalChanges / (totalSeasons * estimatedWeeksPerSeason)
       : 0;
 
-    // Calculate success rate for added players (simplified: players added multiple times = successful pickups)
+    // Calculate success rate for added players
     gm.playerInteractions.mostAdded.forEach((player) => {
-      // If we added a player multiple times, they might be valuable
-      // If we added and then dropped, less successful
       const droppedCount = gm.playerInteractions.mostDropped.find(p => p.playerKey === player.playerKey)?.count || 0;
       player.successRate = player.count > droppedCount ? (player.count - droppedCount) / player.count : 0;
     });
@@ -432,6 +409,7 @@ export function processGMAnalytics(
 
   // Process head-to-head records from matchups
   Object.entries(matchupsBySeason).forEach(([season, matchups]) => {
+    if (!matchups) return;
     matchups.forEach((matchup) => {
       if (matchup.teams.length !== 2) return;
 
@@ -450,22 +428,11 @@ export function processGMAnalytics(
 
       // Update head-to-head for GM1
       if (!gm1.headToHead[manager2Id]) {
-        gm1.headToHead[manager2Id] = {
-          opponentName: gm2.managerName,
-          wins: 0,
-          losses: 0,
-          ties: 0,
-        };
+        gm1.headToHead[manager2Id] = { opponentName: gm2.managerName, wins: 0, losses: 0, ties: 0 };
       }
-
       // Update head-to-head for GM2
       if (!gm2.headToHead[manager1Id]) {
-        gm2.headToHead[manager1Id] = {
-          opponentName: gm1.managerName,
-          wins: 0,
-          losses: 0,
-          ties: 0,
-        };
+        gm2.headToHead[manager1Id] = { opponentName: gm1.managerName, wins: 0, losses: 0, ties: 0 };
       }
 
       // Determine winner/loser
@@ -492,7 +459,6 @@ export function processGMAnalytics(
           const val1 = team1.stats![statId];
           const val2 = team2.stats![statId];
 
-          // Initialize category tracking for both GMs
           if (!gm1.categoryDominance[statId]) {
             gm1.categoryDominance[statId] = { wins: 0, total: 0, winRate: 0 };
           }
@@ -503,7 +469,6 @@ export function processGMAnalytics(
           gm1.categoryDominance[statId].total++;
           gm2.categoryDominance[statId].total++;
 
-          // Higher is better for most stats (simplified)
           if (val1 > val2) {
             gm1.categoryDominance[statId].wins++;
           } else if (val2 > val1) {
@@ -514,17 +479,15 @@ export function processGMAnalytics(
     });
   });
 
-  // Calculate category win rates and add stat names
+  // Calculate category win rates and rename to display names
   gmMap.forEach((gm) => {
     Object.keys(gm.categoryDominance).forEach((statId) => {
       const cat = gm.categoryDominance[statId];
       cat.winRate = cat.total > 0 ? cat.wins / cat.total : 0;
     });
 
-    // Rename stat IDs to display names if available
     const renamedCategories: typeof gm.categoryDominance = {};
     Object.entries(gm.categoryDominance).forEach(([statId, data]) => {
-      // Try to find display name from any season's stat categories
       let displayName = statId;
       for (const seasonCats of Object.values(statCategories)) {
         const found = seasonCats.find(c => c.stat_id === statId);
@@ -538,13 +501,140 @@ export function processGMAnalytics(
     gm.categoryDominance = renamedCategories;
   });
 
-  // Generate best/worst decisions based on data
+  // Process playoff matchups using league settings
+  Object.entries(matchupsBySeason).forEach(([season, matchups]) => {
+    if (!matchups) return;
+    const leagueSettings = leagueSettingsBySeason[season];
+    if (!leagueSettings || !leagueSettings.playoff_start_week) return;
+
+    const playoffStartWeek = leagueSettings.playoff_start_week;
+    const endWeek = leagueSettings.end_week || 25;
+    const numPlayoffTeams = leagueSettings.num_playoff_teams || 0;
+    const totalPlayoffWeeks = endWeek - playoffStartWeek + 1;
+
+    // Filter to playoff week matchups only
+    const playoffMatchups = matchups.filter(m => m.week >= playoffStartWeek && m.week <= endWeek);
+    if (playoffMatchups.length === 0) return;
+
+    // Track playoff results per team for this season
+    const teamPlayoffResults: Map<string, { wins: number; losses: number; weekResults: { week: number; won: boolean; oppKey: string }[] }> = new Map();
+
+    playoffMatchups.forEach((matchup) => {
+      if (matchup.teams.length !== 2) return;
+      const [t1, t2] = matchup.teams;
+
+      [t1, t2].forEach((team) => {
+        if (!teamPlayoffResults.has(team.team_key)) {
+          teamPlayoffResults.set(team.team_key, { wins: 0, losses: 0, weekResults: [] });
+        }
+      });
+
+      const r1 = teamPlayoffResults.get(t1.team_key)!;
+      const r2 = teamPlayoffResults.get(t2.team_key)!;
+
+      let t1Won: boolean;
+      if (t1.win === true) {
+        t1Won = true;
+      } else if (t2.win === true) {
+        t1Won = false;
+      } else {
+        t1Won = t1.points > t2.points;
+      }
+
+      if (t1Won) {
+        r1.wins++;
+        r2.losses++;
+      } else {
+        r1.losses++;
+        r2.wins++;
+      }
+      r1.weekResults.push({ week: matchup.week, won: t1Won, oppKey: t2.team_key });
+      r2.weekResults.push({ week: matchup.week, won: !t1Won, oppKey: t1.team_key });
+    });
+
+    // Determine round labels based on playoff structure
+    const getRoundLabel = (weekOffset: number): string => {
+      if (totalPlayoffWeeks <= 0) return `Week ${playoffStartWeek + weekOffset}`;
+      // Common playoff structures: 3 rounds (QF, SF, F) or 2 rounds (SF, F)
+      if (totalPlayoffWeeks >= 3) {
+        if (weekOffset === 0) return 'Quarterfinals';
+        if (weekOffset === 1) return 'Semifinals';
+        if (weekOffset === 2) return 'Finals';
+        return `Playoff Wk ${weekOffset + 1}`;
+      } else if (totalPlayoffWeeks === 2) {
+        if (weekOffset === 0) return 'Semifinals';
+        if (weekOffset === 1) return 'Finals';
+        return `Playoff Wk ${weekOffset + 1}`;
+      } else {
+        return 'Finals';
+      }
+    };
+
+    // For each GM that made playoffs, determine their playoff stats
+    teamPlayoffResults.forEach((results, teamKey) => {
+      const managerId = teamKeyToManagerId.get(teamKey);
+      if (!managerId) return;
+      const gm = gmMap.get(managerId);
+      if (!gm || !gm.seasons[season]) return;
+
+      // Only count GMs that actually made playoffs
+      if (!gm.seasons[season].playoffAppearance) return;
+
+      const seed = gm.seasons[season].rank; // Regular season rank = playoff seed
+
+      // Determine deepest round: find the last week they won + 1 (or if they won the final week)
+      let eliminatedRound = 'Quarterfinals';
+      const lastPlayoffWeekPlayed = results.weekResults.length > 0
+        ? Math.max(...results.weekResults.map(r => r.week))
+        : playoffStartWeek;
+      const lastWeekOffset = lastPlayoffWeekPlayed - playoffStartWeek;
+      const lastWeekResult = results.weekResults.find(r => r.week === lastPlayoffWeekPlayed);
+
+      if (lastWeekResult?.won && lastPlayoffWeekPlayed === endWeek) {
+        eliminatedRound = 'Champion';
+      } else if (lastPlayoffWeekPlayed === endWeek) {
+        eliminatedRound = 'Finals';
+      } else {
+        eliminatedRound = getRoundLabel(lastWeekOffset);
+      }
+
+      const isFinalsAppearance = lastPlayoffWeekPlayed >= endWeek;
+      const isChampFromPlayoffs = lastWeekResult?.won && lastPlayoffWeekPlayed === endWeek;
+
+      const playoffStats: PlayoffSeasonStats = {
+        seed,
+        playoffWins: results.wins,
+        playoffLosses: results.losses,
+        eliminatedRound,
+        finalsAppearance: isFinalsAppearance,
+        champion: isChampFromPlayoffs || false,
+      };
+
+      gm.seasons[season].playoff = playoffStats;
+      gm.playoffWins += results.wins;
+      gm.playoffLosses += results.losses;
+      if (isFinalsAppearance) gm.finalsAppearances++;
+    });
+  });
+
+  // Calculate aggregate playoff stats
   gmMap.forEach((gm) => {
-    // Best decisions: players added multiple times with high success rate
+    const totalPlayoffGames = gm.playoffWins + gm.playoffLosses;
+    gm.playoffWinPercentage = totalPlayoffGames > 0 ? gm.playoffWins / totalPlayoffGames : 0;
+
+    const seeds = Object.values(gm.seasons)
+      .filter(s => s.playoffAppearance && s.playoff?.seed)
+      .map(s => s.playoff!.seed);
+    gm.bestPlayoffSeed = seeds.length > 0 ? Math.min(...seeds) : 0;
+    gm.avgPlayoffSeed = seeds.length > 0 ? seeds.reduce((a, b) => a + b, 0) / seeds.length : 0;
+  });
+
+  // Generate best/worst decisions
+  gmMap.forEach((gm) => {
     gm.playerInteractions.mostAdded
       .filter(p => p.count >= 2 && p.successRate > 0.5)
       .slice(0, 3)
-      .forEach((player, idx) => {
+      .forEach((player) => {
         gm.bestDecisions.push({
           type: 'add',
           playerName: player.playerName,
@@ -554,7 +644,6 @@ export function processGMAnalytics(
         });
       });
 
-    // Best decisions: early round draft picks (round 1-3)
     gm.playerInteractions.draftPicks
       .filter(p => p.round <= 3)
       .slice(0, 2)
@@ -568,13 +657,12 @@ export function processGMAnalytics(
         });
       });
 
-    // Worst decisions: players dropped multiple times (possibly premature drops)
     gm.playerInteractions.mostDropped
       .filter(p => p.count >= 3)
       .slice(0, 3)
       .forEach((player) => {
         gm.worstDecisions.push({
-          type: 'drop',
+          type: 'drop' as any,
           playerName: player.playerName,
           description: `Dropped ${player.playerName} ${player.count} times - may indicate roster churn issues`,
           value: player.count,
@@ -582,10 +670,8 @@ export function processGMAnalytics(
         });
       });
 
-    // Sort decisions by value
     gm.bestDecisions.sort((a, b) => b.value - a.value);
     gm.bestDecisions = gm.bestDecisions.slice(0, 5);
-
     gm.worstDecisions.sort((a, b) => b.value - a.value);
     gm.worstDecisions = gm.worstDecisions.slice(0, 5);
   });
@@ -594,61 +680,71 @@ export function processGMAnalytics(
 }
 
 /**
- * Calculate category dominance from matchup data
+ * Get aggregated draft data across all GMs (most drafted players league-wide)
  */
-export function calculateCategoryDominance(
-  matchups: MatchupData[],
-  teamKey: string,
-  teamKeyToManagerId: Map<string, string>
-): { [category: string]: { wins: number; total: number; winRate: number } } {
-  const dominance: { [category: string]: { wins: number; total: number; winRate: number } } = {};
+export function getMostDraftedPlayers(
+  gmAnalytics: Map<string, GMAnalytics>
+): Array<{ playerName: string; playerKey: string; count: number; avgCost: number; maxCost: number; managers: string[]; seasons: string[] }> {
+  const playerDraftCounts: Map<string, { playerName: string; playerKey: string; count: number; totalCost: number; maxCost: number; managers: Set<string>; seasons: Set<string> }> = new Map();
 
-  matchups.forEach((matchup) => {
-    const myTeam = matchup.teams.find(t => t.team_key === teamKey);
-    const opponent = matchup.teams.find(t => t.team_key !== teamKey);
-
-    if (!myTeam || !opponent || !myTeam.stats || !opponent.stats) return;
-
-    Object.keys(myTeam.stats).forEach((statId) => {
-      const myVal = myTeam.stats![statId];
-      const oppVal = opponent.stats![statId];
-
-      if (!dominance[statId]) {
-        dominance[statId] = { wins: 0, total: 0, winRate: 0 };
+  gmAnalytics.forEach((gm) => {
+    gm.playerInteractions.draftPicks.forEach((pick) => {
+      const key = pick.playerKey;
+      if (!playerDraftCounts.has(key)) {
+        playerDraftCounts.set(key, {
+          playerName: pick.playerName,
+          playerKey: key,
+          count: 0,
+          totalCost: 0,
+          maxCost: 0,
+          managers: new Set(),
+          seasons: new Set(),
+        });
       }
-
-      dominance[statId].total++;
-
-      // Simplified: higher is better
-      if (myVal > oppVal) {
-        dominance[statId].wins++;
-      }
+      const entry = playerDraftCounts.get(key)!;
+      entry.count++;
+      entry.totalCost += pick.cost;
+      entry.maxCost = Math.max(entry.maxCost, pick.cost);
+      entry.managers.add(gm.managerName);
+      entry.seasons.add(pick.season);
     });
   });
 
-  // Calculate win rates
-  Object.values(dominance).forEach((cat) => {
-    cat.winRate = cat.total > 0 ? cat.wins / cat.total : 0;
-  });
-
-  return dominance;
+  return Array.from(playerDraftCounts.values())
+    .map(e => ({
+      playerName: e.playerName,
+      playerKey: e.playerKey,
+      count: e.count,
+      avgCost: e.count > 0 ? Math.round(e.totalCost / e.count) : 0,
+      maxCost: e.maxCost,
+      managers: Array.from(e.managers),
+      seasons: Array.from(e.seasons).sort(),
+    }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 30);
 }
 
 /**
- * Filter GM analytics by username
+ * Get league-wide trade summary
  */
-export function filterGMByUsername(
-  gmAnalytics: Map<string, GMAnalytics>,
-  username: string
-): Map<string, GMAnalytics> {
-  if (!username) return gmAnalytics;
+export function getLeagueTradeSummary(
+  gmAnalytics: Map<string, GMAnalytics>
+): { totalTrades: number; mostActiveTrader: { name: string; count: number }; tradesByGM: Array<{ name: string; count: number }> } {
+  const tradesByGM: Array<{ name: string; count: number }> = [];
+  let totalTrades = 0;
 
-  const filtered = new Map<string, GMAnalytics>();
-  gmAnalytics.forEach((gm, key) => {
-    if (gm.managerName.toLowerCase().includes(username.toLowerCase())) {
-      filtered.set(key, gm);
-    }
+  gmAnalytics.forEach((gm) => {
+    tradesByGM.push({ name: gm.managerName, count: gm.rosterChurn.totalTrades });
+    totalTrades += gm.rosterChurn.totalTrades;
   });
 
-  return filtered;
+  tradesByGM.sort((a, b) => b.count - a.count);
+  // Trades are double-counted (both sides), so divide total by 2
+  totalTrades = Math.round(totalTrades / 2);
+
+  return {
+    totalTrades,
+    mostActiveTrader: tradesByGM[0] || { name: 'N/A', count: 0 },
+    tradesByGM,
+  };
 }

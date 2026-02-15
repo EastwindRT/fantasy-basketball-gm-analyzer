@@ -1,11 +1,14 @@
 /**
- * Yahoo Transactions API Route
- * 
- * Server-side API route using yahoo-fantasy package to fetch transactions.
+ * Yahoo Transactions API Route (alternate)
+ *
+ * Note: The main app uses /api/yahoo/fetch as its proxy.
+ * This route exists as a convenience endpoint.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import YahooFantasy from 'yahoo-fantasy';
+import axios from 'axios';
+
+const YAHOO_API_BASE = 'https://fantasysports.yahooapis.com/fantasy/v2';
 
 export async function GET(request: NextRequest) {
   try {
@@ -20,24 +23,22 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const clientId = process.env.YAHOO_CLIENT_ID || process.env.NEXT_PUBLIC_YAHOO_CLIENT_ID || '';
-    const clientSecret = process.env.YAHOO_CLIENT_SECRET || process.env.NEXT_PUBLIC_YAHOO_CLIENT_SECRET || '';
+    const response = await axios.get(
+      `${YAHOO_API_BASE}/leagues;league_keys=${leagueKey}/transactions;types=add,drop,trade?format=json`,
+      {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          Accept: 'application/json',
+        },
+      }
+    );
 
-    const yf = new YahooFantasy(clientId, clientSecret);
-    yf.setUserToken(accessToken);
-
-    const data = await yf.league.transactions(leagueKey);
-
-    return NextResponse.json(data);
+    return NextResponse.json(response.data);
   } catch (error: any) {
     console.error('Transactions fetch error:', error);
     return NextResponse.json(
       { error: error.message || 'Failed to fetch transactions' },
-      { status: 500 }
+      { status: error.response?.status || 500 }
     );
   }
 }
-
-
-
-

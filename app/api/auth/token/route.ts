@@ -7,7 +7,6 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import axios from 'axios';
-import YahooFantasy from 'yahoo-fantasy';
 
 const YAHOO_TOKEN_URL = 'https://api.login.yahoo.com/oauth2/get_token';
 

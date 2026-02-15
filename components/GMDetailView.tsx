@@ -51,9 +51,10 @@ export default function GMDetailView() {
           </button>
         </div>
         
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
           <StatCard label="Average Rank" value={gm.overallRanking.toFixed(1)} />
-          <StatCard label="Total Wins" value={gm.totalWins.toString()} />
+          <StatCard label="Record" value={`${gm.totalWins}-${gm.totalLosses}${gm.totalTies > 0 ? `-${gm.totalTies}` : ''}`} />
+          <StatCard label="Win %" value={`${(gm.winPercentage * 100).toFixed(1)}%`} />
           <StatCard label="Championships" value={gm.championships.toString()} />
           <StatCard label="Consistency" value={gm.consistencyScore.toFixed(2)} />
         </div>

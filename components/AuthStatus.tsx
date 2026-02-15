@@ -5,10 +5,10 @@
  */
 
 import { useEffect, useState } from 'react';
-import { getAuthState, isTokenExpired } from '@/lib/yahoo-api';
+import { getAuthState, isTokenExpired, YahooAuthState } from '@/lib/yahoo-api';
 
 export default function AuthStatus() {
-  const [authState, setAuthState] = useState({ accessToken: null, refreshToken: null, expiresAt: null });
+  const [authState, setAuthState] = useState<YahooAuthState>({ accessToken: null, refreshToken: null, expiresAt: null });
   const [expired, setExpired] = useState(true);
   const [mounted, setMounted] = useState(false);
 

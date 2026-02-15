@@ -5,25 +5,26 @@
  *
  * Orchestrates the entire application flow:
  * - Input form for league ID and seasons
- * - Data fetching and processing
+ * - Data fetching and processing (with parallel fetches for efficiency)
  * - Dashboard and GM detail views
  * - Error handling and loading states
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useAppStore } from '@/lib/store';
 import { getAuthState, isTokenExpired, exchangeCodeForToken } from '@/lib/yahoo-api';
 import {
   fetchLeague,
   fetchStandings,
   fetchTransactions,
-  fetchScoreboard,
   fetchDraftResults,
   fetchAllMatchups,
   fetchStatCategories,
+  fetchLeagueSettings,
   buildLeagueKey,
   MatchupData,
   DraftResult,
+  LeagueSettings,
 } from '@/lib/yahoo-api';
 import { getCachedData, setCachedData, getCacheKey, clearCache } from '@/lib/data-cache';
 import { processGMAnalytics } from '@/lib/data-processor';
@@ -54,6 +55,19 @@ export default function Home() {
 
   const [isInitialized, setIsInitialized] = useState(false);
   const [isClearingCache, setIsClearingCache] = useState(false);
+
+  // Auto-clear cache when app version changes (forces fresh data with new features like playoff stats)
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const CACHE_VERSION = 'v3-draft-names';
+    const currentVersion = localStorage.getItem('app_cache_version');
+    if (currentVersion !== CACHE_VERSION) {
+      clearCache().then(() => {
+        localStorage.setItem('app_cache_version', CACHE_VERSION);
+        console.log('Cache auto-cleared for new version:', CACHE_VERSION);
+      }).catch(() => {});
+    }
+  }, []);
 
   // Handle OAuth callback
   useEffect(() => {
@@ -98,7 +112,7 @@ export default function Home() {
   }, [setError]);
 
   // Handle cache clear
-  const handleClearCache = async () => {
+  const handleClearCache = useCallback(async () => {
     setIsClearingCache(true);
     try {
       await clearCache();
@@ -109,7 +123,20 @@ export default function Home() {
     } finally {
       setIsClearingCache(false);
     }
-  };
+  }, []);
+
+  // Helper: fetch or get cached data
+  const fetchOrCache = useCallback(async (
+    cacheKey: string,
+    fetcher: () => Promise<any>,
+    isHistorical: boolean = true
+  ): Promise<any> => {
+    const cached = await getCachedData(cacheKey);
+    if (cached) return cached;
+    const data = await fetcher();
+    await setCachedData(cacheKey, data, isHistorical);
+    return data;
+  }, []);
 
   // Fetch data when league is set
   useEffect(() => {
@@ -129,15 +156,17 @@ export default function Home() {
 
         setLoadingMessage('Fetching league data...');
 
-        // Fetch league info for first season
-        const firstSeason = currentSeasons[0];
-        const leagueKey = buildLeagueKey(currentLeagueKey, firstSeason);
+        // Fetch league info using the most recent season's key
+        // Use the season-specific key directly if available (already complete from discovery)
+        const mostRecentSeason = currentSeasons[currentSeasons.length - 1];
+        const leagueKey = seasonLeagueKeys[mostRecentSeason]
+          ? seasonLeagueKeys[mostRecentSeason]
+          : buildLeagueKey(currentLeagueKey, mostRecentSeason);
 
-        let leagueData = await getCachedData(getCacheKey(leagueKey, firstSeason, 'league'));
-        if (!leagueData) {
-          leagueData = await fetchLeague(leagueKey);
-          await setCachedData(getCacheKey(leagueKey, firstSeason, 'league'), leagueData, true);
-        }
+        const leagueData = await fetchOrCache(
+          getCacheKey(leagueKey, mostRecentSeason, 'league'),
+          () => fetchLeague(leagueKey)
+        );
         setLeagueData(leagueData);
 
         // Data structures to collect across seasons
@@ -146,118 +175,79 @@ export default function Home() {
         const matchupsBySeason: { [season: string]: MatchupData[] } = {};
         const draftResultsBySeason: { [season: string]: DraftResult[] } = {};
         const statCategoriesBySeason: { [season: string]: Array<{ stat_id: string; name: string; display_name: string }> } = {};
+        const leagueSettingsBySeason: { [season: string]: LeagueSettings } = {};
 
         for (let i = 0; i < currentSeasons.length; i++) {
           const season = currentSeasons[i];
-          // Use season-specific league key if available, otherwise use the default
-          const baseLeagueKey = seasonLeagueKeys[season] || currentLeagueKey;
-          const seasonLeagueKey = buildLeagueKey(baseLeagueKey, season);
+          // If seasonLeagueKeys has an entry for this season, it's already a complete key
+          // from league discovery (e.g., "454.l.12345") — use it directly.
+          // Only call buildLeagueKey when falling back to the base league key.
+          const seasonLeagueKey = seasonLeagueKeys[season]
+            ? seasonLeagueKeys[season]
+            : buildLeagueKey(currentLeagueKey, season);
 
-          console.log(`Season ${season}: Using league key ${seasonLeagueKey} (base: ${baseLeagueKey})`);
+          setLoadingMessage(`Fetching data for ${season}-${(parseInt(season) + 1).toString().slice(-2)} season (${i + 1}/${currentSeasons.length})...`);
 
-          setLoadingMessage(`Fetching data for ${season} (${i + 1}/${currentSeasons.length})...`);
+          // Fetch standings, transactions, draft results, stat categories, and league settings in PARALLEL
+          const [standings, transactions, draftResults, statCategories, settings] = await Promise.all([
+            fetchOrCache(
+              getCacheKey(seasonLeagueKey, season, 'standings'),
+              () => fetchStandings(seasonLeagueKey)
+            ).catch(err => { console.warn(`Failed to fetch standings for ${season}:`, err); return []; }),
 
-          // Fetch standings
-          let standings = await getCachedData(getCacheKey(seasonLeagueKey, season, 'standings'));
-          const fromCache = !!standings;
-          if (!standings) {
-            standings = await fetchStandings(seasonLeagueKey);
-            await setCachedData(getCacheKey(seasonLeagueKey, season, 'standings'), standings, true);
-          }
-          // Debug: Log standings data
-          console.log(`=== STANDINGS FOR ${season} (${fromCache ? 'from cache' : 'fresh'}) ===`);
-          console.log('Number of teams:', standings?.length);
-          if (standings && standings[0]) {
-            console.log('First team sample:', JSON.stringify(standings[0], null, 2));
-          }
+            fetchOrCache(
+              getCacheKey(seasonLeagueKey, season, 'transactions'),
+              () => fetchTransactions(seasonLeagueKey)
+            ).catch(err => { console.warn(`Failed to fetch transactions for ${season}:`, err); return []; }),
+
+            fetchOrCache(
+              getCacheKey(seasonLeagueKey, season, 'draftresults'),
+              () => fetchDraftResults(seasonLeagueKey)
+            ).catch(err => { console.warn(`Failed to fetch draft results for ${season}:`, err); return []; }),
+
+            fetchOrCache(
+              getCacheKey(seasonLeagueKey, season, 'statcategories'),
+              () => fetchStatCategories(seasonLeagueKey)
+            ).catch(err => { console.warn(`Failed to fetch stat categories for ${season}:`, err); return []; }),
+
+            fetchOrCache(
+              getCacheKey(seasonLeagueKey, season, 'leaguesettings'),
+              () => fetchLeagueSettings(seasonLeagueKey)
+            ).catch(err => { console.warn(`Failed to fetch league settings for ${season}:`, err); return null; }),
+          ]);
+
           teamsBySeason[season] = standings;
-
-          // Fetch transactions
-          setLoadingMessage(`Fetching transactions for ${season}...`);
-          let transactions = await getCachedData(getCacheKey(seasonLeagueKey, season, 'transactions'));
-          if (!transactions) {
-            try {
-              transactions = await fetchTransactions(seasonLeagueKey);
-              await setCachedData(getCacheKey(seasonLeagueKey, season, 'transactions'), transactions, true);
-            } catch (err) {
-              console.warn(`Failed to fetch transactions for ${season}:`, err);
-              transactions = [];
-            }
-          }
           transactionsBySeason[season] = transactions;
-
-          // Fetch draft results
-          setLoadingMessage(`Fetching draft results for ${season}...`);
-          let draftResults = await getCachedData(getCacheKey(seasonLeagueKey, season, 'draftresults'));
-          if (!draftResults) {
-            try {
-              draftResults = await fetchDraftResults(seasonLeagueKey);
-              await setCachedData(getCacheKey(seasonLeagueKey, season, 'draftresults'), draftResults, true);
-            } catch (err) {
-              console.warn(`Failed to fetch draft results for ${season}:`, err);
-              draftResults = [];
-            }
-          }
           draftResultsBySeason[season] = draftResults;
-
-          // Fetch stat categories
-          setLoadingMessage(`Fetching stat categories for ${season}...`);
-          let statCategories = await getCachedData(getCacheKey(seasonLeagueKey, season, 'statcategories'));
-          if (!statCategories) {
-            try {
-              statCategories = await fetchStatCategories(seasonLeagueKey);
-              await setCachedData(getCacheKey(seasonLeagueKey, season, 'statcategories'), statCategories, true);
-            } catch (err) {
-              console.warn(`Failed to fetch stat categories for ${season}:`, err);
-              statCategories = [];
-            }
-          }
           statCategoriesBySeason[season] = statCategories;
+          if (settings) leagueSettingsBySeason[season] = settings;
 
-          // Fetch all matchups for the season
-          setLoadingMessage(`Fetching matchups for ${season}...`);
-          let matchups = await getCachedData(getCacheKey(seasonLeagueKey, season, 'matchups'));
-          if (!matchups) {
-            try {
-              // Fetch matchups for weeks 1-25 (covers regular season + playoffs)
-              matchups = await fetchAllMatchups(seasonLeagueKey, 1, 25);
-              await setCachedData(getCacheKey(seasonLeagueKey, season, 'matchups'), matchups, true);
-            } catch (err) {
-              console.warn(`Failed to fetch matchups for ${season}:`, err);
-              matchups = [];
-            }
+          // Fetch matchups (these are sequential per week but we cache the whole batch)
+          setLoadingMessage(`Fetching matchups for ${season}-${(parseInt(season) + 1).toString().slice(-2)}...`);
+          let matchups: MatchupData[] = [];
+          try {
+            matchups = await fetchOrCache(
+              getCacheKey(seasonLeagueKey, season, 'matchups'),
+              () => fetchAllMatchups(seasonLeagueKey, 1, 25)
+            );
+          } catch (err) {
+            console.warn(`Failed to fetch matchups for ${season}:`, err);
           }
           matchupsBySeason[season] = matchups;
         }
 
         setLoadingMessage('Processing analytics...');
 
-        // Debug: Log all input data
-        console.log('=== DATA PROCESSOR INPUT ===');
-        console.log('Seasons:', Object.keys(teamsBySeason));
-        Object.entries(teamsBySeason).forEach(([season, teams]) => {
-          console.log(`Season ${season}: ${(teams as any[])?.length || 0} teams`);
-          if ((teams as any[])?.[0]) {
-            const t = (teams as any[])[0];
-            console.log(`  First team: ${t.name}, W-L: ${t.standings?.wins}-${t.standings?.losses}`);
-          }
-        });
-
-        // Process all data into GM analytics with optional filter
+        // Process all data into GM analytics
         const analytics = processGMAnalytics(
           teamsBySeason,
           transactionsBySeason,
           matchupsBySeason,
           draftResultsBySeason,
           statCategoriesBySeason,
-          gmUsernameFilter || undefined
+          gmUsernameFilter || undefined,
+          leagueSettingsBySeason
         );
-
-        // Debug: Log output
-        console.log('=== GM ANALYTICS OUTPUT ===');
-        analytics.forEach((gm, key) => {
-          console.log(`GM: ${gm.managerName}, W-L-T: ${gm.totalWins}-${gm.totalLosses}-${gm.totalTies}, Rank: ${gm.overallRanking}`);
-        });
 
         setGMAnalytics(analytics);
         setLoadingMessage('');
@@ -266,11 +256,11 @@ export default function Home() {
         let errorMessage = `Failed to fetch data: ${err.message}`;
 
         if (err.response?.status === 401) {
-          errorMessage = 'Authentication expired or insufficient permissions. Please re-authenticate with an account that has access to this league.';
+          errorMessage = 'Authentication expired or insufficient permissions. Please re-authenticate.';
         } else if (err.response?.status === 403) {
-          errorMessage = 'Access denied. This appears to be a private league. Make sure you authenticated with a Yahoo account that has access to this league.';
+          errorMessage = 'Access denied. This appears to be a private league. Make sure you authenticated with an account that has access.';
         } else if (err.response?.status === 404) {
-          errorMessage = 'League not found. Please check the league ID. If this is a private league, ensure you authenticated with an account that has access.';
+          errorMessage = 'League not found. Please check the league ID.';
         } else if (err.response?.status === 429) {
           errorMessage = 'Rate limit exceeded. Please wait a moment and try again.';
         }
@@ -285,6 +275,7 @@ export default function Home() {
   }, [
     currentLeagueKey,
     currentSeasons,
+    seasonLeagueKeys,
     gmUsernameFilter,
     isInitialized,
     setLeagueData,
@@ -292,6 +283,7 @@ export default function Home() {
     setLoading,
     setLoadingMessage,
     setError,
+    fetchOrCache,
   ]);
 
   return (
