@@ -213,7 +213,12 @@ export function processGMAnalytics(
       const leagueSettings = leagueSettingsBySeason[season];
       const numPlayoffTeams = leagueSettings?.num_playoff_teams || Math.ceil(numTeams / 2);
       const isPlayoff = standings.rank <= numPlayoffTeams;
-      const isChampion = standings.rank === 1;
+
+      // Don't crown champion for current/ongoing season
+      const currentYear = new Date().getFullYear();
+      const seasonYear = parseInt(season);
+      const isCurrentSeason = seasonYear >= currentYear - 1; // e.g. 2025 season = 2025-26 is current
+      const isChampion = !isCurrentSeason && standings.rank === 1;
 
       gm.seasons[season] = {
         rank: standings.rank,
@@ -222,7 +227,7 @@ export function processGMAnalytics(
         ties: standings.ties,
         pointsFor: standings.points_for,
         pointsAgainst: standings.points_against,
-        playoffAppearance: isPlayoff,
+        playoffAppearance: isCurrentSeason ? false : isPlayoff,
         championship: isChampion,
         teamKey: team.team_key,
       };
@@ -230,7 +235,7 @@ export function processGMAnalytics(
       gm.totalWins += standings.wins;
       gm.totalLosses += standings.losses;
       gm.totalTies += standings.ties;
-      if (isPlayoff) gm.playoffAppearances++;
+      if (!isCurrentSeason && isPlayoff) gm.playoffAppearances++;
       if (isChampion) gm.championships++;
     });
   });

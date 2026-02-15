@@ -207,7 +207,7 @@ function OverviewTab({ sortedGMs, allSeasons, onSelectGM }: { sortedGMs: GMAnaly
       </td>
     ),
     avgRank: (gm) => (
-      <td key="avgRank" className="px-4 py-3.5 text-[14px] font-bold tabular-nums text-gray-900 dark:text-white">{gm.overallRanking.toFixed(config.dataDisplay.decimalPlaces)}</td>
+      <td key="avgRank" className="px-4 py-3.5 text-[14px] font-bold tabular-nums text-gray-900 dark:text-white" title="Average finish position across all seasons (lower = better)">{gm.overallRanking.toFixed(config.dataDisplay.decimalPlaces)}</td>
     ),
     record: (gm) => (
       <td key="record" className="px-4 py-3.5 text-[13px] tabular-nums">
