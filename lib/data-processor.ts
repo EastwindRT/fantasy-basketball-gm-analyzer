@@ -4,7 +4,7 @@
  * Processes raw Yahoo API data into GM-focused statistics and insights.
  */
 
-import { TeamData, TransactionData, DraftResult, MatchupData, LeagueSettings } from './yahoo-api';
+import { TeamData, TransactionData, DraftResult, MatchupData, LeagueSettings, getStatDisplayName } from './yahoo-api';
 
 export interface PlayoffSeasonStats {
   seed: number;
@@ -516,40 +516,27 @@ export function processGMAnalytics(
     });
   });
 
-  // Calculate category win rates and rename to display names
+  // Calculate category win rates and rename stat IDs to display names
   gmMap.forEach((gm) => {
     Object.keys(gm.categoryDominance).forEach((statId) => {
       const cat = gm.categoryDominance[statId];
       cat.winRate = cat.total > 0 ? cat.wins / cat.total : 0;
     });
 
+    // Rename categoryDominance keys from stat IDs to display names
     const renamedCategories: typeof gm.categoryDominance = {};
     Object.entries(gm.categoryDominance).forEach(([statId, data]) => {
-      let displayName = statId;
-      for (const seasonCats of Object.values(statCategories)) {
-        const found = seasonCats.find(c => c.stat_id === statId);
-        if (found) {
-          displayName = found.display_name || found.name;
-          break;
-        }
-      }
+      const displayName = getStatDisplayName(statId, statCategories);
       renamedCategories[displayName] = data;
     });
     gm.categoryDominance = renamedCategories;
 
-    // Rename stat IDs to display names in categoryH2H
+    // Rename categoryH2H keys from stat IDs to display names
     const renamedH2H: typeof gm.categoryH2H = {};
     Object.entries(gm.categoryH2H).forEach(([oppId, oppData]) => {
       const renamedCats: typeof oppData.categories = {};
       Object.entries(oppData.categories).forEach(([statId, data]) => {
-        let displayName = statId;
-        for (const seasonCats of Object.values(statCategories)) {
-          const found = seasonCats.find(c => c.stat_id === statId);
-          if (found) {
-            displayName = found.display_name || found.name;
-            break;
-          }
-        }
+        const displayName = getStatDisplayName(statId, statCategories);
         renamedCats[displayName] = data;
       });
       renamedH2H[oppId] = { opponentName: oppData.opponentName, categories: renamedCats };

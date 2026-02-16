@@ -1124,17 +1124,20 @@ export async function fetchScoreboard(leagueKey: string, week?: number): Promise
           if (!t.team) return;
 
           const teamInfo = t.team[0];
-          const teamStats = t.team[1];
 
-          // Parse team stats/categories if available
+          // Parse team stats/categories — Yahoo nests this in various positions
           const stats: { [category: string]: number } = {};
-          if (teamStats?.team_stats?.stats) {
-            teamStats.team_stats.stats.forEach((s: any) => {
-              if (s.stat) {
-                stats[s.stat.stat_id] = parseFloat(s.stat.value || '0');
-              }
-            });
+          for (let idx = 1; idx < t.team.length; idx++) {
+            const chunk = t.team[idx];
+            if (chunk?.team_stats?.stats) {
+              chunk.team_stats.stats.forEach((s: any) => {
+                if (s.stat) {
+                  stats[String(s.stat.stat_id)] = parseFloat(s.stat.value || '0');
+                }
+              });
+            }
           }
+          const teamStats = t.team[1];
 
           // Determine win/loss from team_points or win_probability
           let points = 0;
@@ -1158,6 +1161,38 @@ export async function fetchScoreboard(leagueKey: string, week?: number): Promise
       }
 
       if (teams.length === 2) {
+        // Parse stat_winners from the matchup level (H2H categories leagues)
+        const statWinners = matchup[0]?.stat_winners;
+        if (statWinners && Array.isArray(statWinners)) {
+          statWinners.forEach((sw: any) => {
+            if (sw?.stat_winner) {
+              const statId = String(sw.stat_winner.stat_id || '');
+              const winnerTeamKey = sw.stat_winner.winner_team_key;
+              if (statId && winnerTeamKey) {
+                // Ensure both teams have this stat tracked (even if 0)
+                teams.forEach(team => {
+                  if (!team.stats) team.stats = {};
+                  if (!(statId in team.stats)) team.stats[statId] = 0;
+                });
+                // If winner info is available but stats aren't populated from team_stats,
+                // set synthetic values so category comparison works
+                if (teams[0].stats && teams[1].stats) {
+                  if (teams[0].stats[statId] === 0 && teams[1].stats[statId] === 0) {
+                    if (winnerTeamKey === teams[0].team_key) {
+                      teams[0].stats[statId] = 1;
+                      teams[1].stats[statId] = 0;
+                    } else if (winnerTeamKey === teams[1].team_key) {
+                      teams[0].stats[statId] = 0;
+                      teams[1].stats[statId] = 1;
+                    }
+                    // If is_tied, leave both at 0
+                  }
+                }
+              }
+            }
+          });
+        }
+
         // Determine winner based on points
         if (teams[0].points > teams[1].points) {
           teams[0].win = true;
@@ -1281,22 +1316,58 @@ export async function fetchLeagueSettings(leagueKey: string): Promise<LeagueSett
 /**
  * Fetch league stat categories
  */
+// Common Yahoo NBA stat ID to display name fallback map
+const NBA_STAT_ID_NAMES: { [id: string]: string } = {
+  '0': 'GP', '1': 'GS', '2': 'MIN', '3': 'FGA', '4': 'FGM',
+  '5': 'FG%', '6': 'FTA', '7': 'FTM', '8': 'FT%', '9': '3PTA',
+  '10': '3PTM', '11': '3PT%', '12': 'PTS', '13': 'OREB', '14': 'DREB',
+  '15': 'REB', '16': 'AST', '17': 'STL', '18': 'BLK', '19': 'TO',
+  '20': 'A/T', '21': 'PF', '22': 'DISQ', '23': 'TECH', '24': 'EJCT',
+  '25': 'FF', '26': 'MPG', '27': 'DD', '28': 'TD',
+};
+
+export function getStatDisplayName(statId: string, statCategories?: { [season: string]: Array<{ stat_id: string; name: string; display_name: string }> }): string {
+  // Try from fetched categories first
+  if (statCategories) {
+    for (const seasonCats of Object.values(statCategories)) {
+      const found = seasonCats.find(c => c.stat_id === statId);
+      if (found) {
+        return found.display_name || found.name || NBA_STAT_ID_NAMES[statId] || statId;
+      }
+    }
+  }
+  // Fallback to hardcoded map
+  return NBA_STAT_ID_NAMES[statId] || `Stat ${statId}`;
+}
+
 export async function fetchStatCategories(leagueKey: string): Promise<Array<{ stat_id: string; name: string; display_name: string }>> {
   try {
     const data = await apiRequest(`/leagues;league_keys=${leagueKey}/settings`);
 
     // Defensive parsing
     const leagueData = data?.fantasy_content?.leagues?.[0]?.league;
-    if (!leagueData) return [];
+    if (!leagueData) {
+      console.warn('fetchStatCategories: no leagueData found');
+      return [];
+    }
 
     const settingsData = Array.isArray(leagueData) ? leagueData[1]?.settings : leagueData.settings;
-    if (!settingsData) return [];
+    if (!settingsData) {
+      console.warn('fetchStatCategories: no settingsData found');
+      return [];
+    }
 
     const settings = Array.isArray(settingsData) ? settingsData[0] : settingsData;
-    if (!settings?.stat_categories) return [];
+    if (!settings?.stat_categories) {
+      console.warn('fetchStatCategories: no stat_categories in settings');
+      return [];
+    }
 
     const statCategories = Array.isArray(settings.stat_categories) ? settings.stat_categories[0] : settings.stat_categories;
-    if (!statCategories?.stats) return [];
+    if (!statCategories?.stats) {
+      console.warn('fetchStatCategories: no stats in stat_categories');
+      return [];
+    }
 
     const result: Array<{ stat_id: string; name: string; display_name: string }> = [];
 
@@ -1304,13 +1375,15 @@ export async function fetchStatCategories(leagueKey: string): Promise<Array<{ st
 
     stats.forEach((s: any) => {
       if (!s?.stat) return;
+      const statId = String(s.stat.stat_id || '');
       result.push({
-        stat_id: s.stat.stat_id || '',
-        name: s.stat.name || '',
-        display_name: s.stat.display_name || '',
+        stat_id: statId,
+        name: s.stat.name || NBA_STAT_ID_NAMES[statId] || '',
+        display_name: s.stat.display_name || NBA_STAT_ID_NAMES[statId] || '',
       });
     });
 
+    console.log(`fetchStatCategories: found ${result.length} categories:`, result.map(r => `${r.stat_id}=${r.display_name}`).join(', '));
     return result;
   } catch (error) {
     console.warn('Failed to fetch stat categories:', error);
