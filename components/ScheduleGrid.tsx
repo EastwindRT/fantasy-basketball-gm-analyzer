@@ -115,10 +115,10 @@ export default function ScheduleGrid() {
           />
         </div>
 
-        {/* Week buttons — snap to Sunday boundaries */}
+        {/* Week buttons — snap to Sunday (fantasy week end) */}
         <div className="flex items-center gap-1.5">
           <span className="text-sm font-medium text-gray-400">Through</span>
-          {([1, 2, 3] as const).map(w => (
+          {([1, 2] as const).map(w => (
             <button
               key={w}
               onClick={() => setWeeks(w)}
@@ -128,12 +128,12 @@ export default function ScheduleGrid() {
                   : 'bg-white/5 text-gray-300 hover:bg-white/10'
               }`}
             >
-              {w === 1 ? 'This Sun' : w === 2 ? 'Next Sun' : '2nd Sun'}
+              {w === 1 ? 'This Week' : 'Next Week'}
             </button>
           ))}
           {fromDate && (
             <span className="text-xs text-gray-600 ml-1">
-              ({days}d → {endDateISO})
+              ({days}d, ends {endDateISO})
             </span>
           )}
         </div>
