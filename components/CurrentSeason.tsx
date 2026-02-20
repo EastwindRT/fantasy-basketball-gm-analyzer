@@ -252,13 +252,23 @@ export default function CurrentSeason() {
     }
   }
 
-  // ── Projection calculator ──
-  function computeProjected(
+  // Rate-based day counts (always available, no roster needed)
+  const TODAY_ISO     = new Date().toISOString().slice(0, 10);
+  const projWeekEnd   = weekEnd   ?? comingSundayISO();
+  const projWeekStart = weekStart ?? TODAY_ISO;
+  const daysPlayed    = Math.max(1, Math.floor(
+    (new Date(TODAY_ISO + 'T12:00:00').getTime() - new Date(projWeekStart + 'T12:00:00').getTime()) / 86400000
+  ) + 1);
+  const daysRemaining = Math.max(0, Math.floor(
+    (new Date(projWeekEnd + 'T12:00:00').getTime() - new Date(TODAY_ISO + 'T12:00:00').getTime()) / 86400000
+  ));
+
+  // ── Roster-based projection (accurate when averages + schedule loaded) ──
+  const computeProjected = (
     roster: RosterPlayer[],
     avgsMap: Map<string, Record<string, number>>,
     currentStats: Record<string, number> | undefined,
-  ): Record<string, number> {
-    // Accumulate projected remaining stats for all healthy players
+  ): Record<string, number> => {
     const projRem: Record<string, number> = {};
     for (const player of roster) {
       if (player.status === 'O' || player.status === 'IR') continue;
@@ -270,8 +280,6 @@ export default function CurrentSeason() {
         projRem[sid] = (projRem[sid] ?? 0) + avg * rem;
       }
     }
-
-    // Compute projected total per category (scoring + display-only for pct math)
     const proj: Record<string, number> = {};
     for (const cat of allCats) {
       const cur = currentStats?.[cat.stat_id] ?? 0;
@@ -287,31 +295,21 @@ export default function CurrentSeason() {
       }
     }
     return proj;
-  }
+  };
 
-  // Rate-based projection: always computable from current matchup stats alone
-  const TODAY_ISO     = new Date().toISOString().slice(0, 10);
-  const projWeekEnd   = weekEnd   ?? comingSundayISO();
-  const projWeekStart = weekStart ?? TODAY_ISO;
-  const daysPlayed    = Math.max(1, Math.floor(
-    (new Date(TODAY_ISO + 'T12:00:00').getTime() - new Date(projWeekStart + 'T12:00:00').getTime()) / 86400000,
-  ) + 1);
-  const daysRemaining = Math.max(0, Math.floor(
-    (new Date(projWeekEnd + 'T12:00:00').getTime() - new Date(TODAY_ISO + 'T12:00:00').getTime()) / 86400000,
-  ));
-
-  function computeRateProjection(currentStats: Record<string, number> | undefined): Record<string, number> {
+  // ── Rate-based projection (fallback: pace current stats forward) ──
+  const computeRateProjection = (currentStats: Record<string, number> | undefined): Record<string, number> => {
     const proj: Record<string, number> = {};
     for (const cat of allCats) {
       const cur = currentStats?.[cat.stat_id] ?? 0;
       if (PCT_DEPS[cat.stat_id]) {
-        proj[cat.stat_id] = cur; // keep current % — can't extrapolate without makes/attempts splits
+        proj[cat.stat_id] = cur;
       } else {
         proj[cat.stat_id] = cur + (cur / daysPlayed) * daysRemaining;
       }
     }
     return proj;
-  }
+  };
 
   const hasRosterProj = scheduleData !== null && (myAvgs.size > 0 || oppAvgs.size > 0);
   const myProjected  = myTeam  ? (hasRosterProj ? computeProjected(myRoster,  myAvgs,  myTeam.stats)  : computeRateProjection(myTeam.stats))  : null;
