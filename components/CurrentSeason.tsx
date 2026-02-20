@@ -538,7 +538,7 @@ export default function CurrentSeason() {
                   )}
 
                   {/* Projected category breakdown */}
-                  {myProjected && oppProjected ? (
+                  {myProjected && oppProjected && (
                     <>
                       {/* Column labels */}
                       <div className="grid grid-cols-[1fr_80px_1fr] px-5 pb-1 text-[9px] uppercase tracking-widest text-gray-700 font-semibold">
