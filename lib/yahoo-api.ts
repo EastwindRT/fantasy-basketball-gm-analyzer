@@ -1459,32 +1459,64 @@ export async function fetchTeamRoster(teamKey: string): Promise<RosterPlayer[]> 
   try {
     const data = await apiRequest(`/teams;team_keys=${teamKey}/roster`);
     const teamsData = data?.fantasy_content?.teams;
-    if (!teamsData) return [];
+    if (!teamsData) {
+      console.warn('fetchTeamRoster: no fantasy_content.teams');
+      return [];
+    }
 
-    // Yahoo wraps teams in numeric-keyed object
     const teamEntry = teamsData['0']?.team ?? teamsData[0]?.team;
-    if (!teamEntry) return [];
+    if (!teamEntry) {
+      console.warn('fetchTeamRoster: no team entry. teamsData keys:', Object.keys(teamsData));
+      return [];
+    }
 
-    // Roster is usually at team[1].roster
-    const rosterSection = Array.isArray(teamEntry)
-      ? teamEntry.find((chunk: any) => chunk?.roster)?.roster
-      : teamEntry?.roster;
-    if (!rosterSection) return [];
+    // Roster section — search all chunks of the team array
+    let rosterSection: any = null;
+    if (Array.isArray(teamEntry)) {
+      for (const chunk of teamEntry) {
+        if (chunk?.roster) { rosterSection = chunk.roster; break; }
+      }
+    } else {
+      rosterSection = teamEntry?.roster;
+    }
 
-    const playersData = rosterSection['0']?.players ?? rosterSection[0]?.players ?? rosterSection.players;
-    if (!playersData) return [];
+    if (!rosterSection) {
+      console.warn('fetchTeamRoster: no roster section. teamEntry keys:', Array.isArray(teamEntry) ? teamEntry.map((_: any, i: number) => i) : Object.keys(teamEntry));
+      return [];
+    }
+
+    // playersData lives at rosterSection['0'].players, rosterSection[0].players, or rosterSection.players
+    let playersData: any = null;
+    if (rosterSection['0']?.players) {
+      playersData = rosterSection['0'].players;
+    } else if (rosterSection[0]?.players) {
+      playersData = rosterSection[0].players;
+    } else if (rosterSection.players) {
+      playersData = rosterSection.players;
+    } else {
+      // Search any value of rosterSection that has a .players key
+      for (const v of Object.values(rosterSection)) {
+        if (v && typeof v === 'object' && (v as any).players) {
+          playersData = (v as any).players;
+          break;
+        }
+      }
+    }
+
+    if (!playersData) {
+      console.warn('fetchTeamRoster: no playersData. rosterSection:', JSON.stringify(rosterSection, null, 2)?.slice(0, 800));
+      return [];
+    }
 
     const result: RosterPlayer[] = [];
-
-    // Players are in numeric keys: "0", "1", ... (skip "count" key)
     const entries = typeof playersData === 'object' ? Object.entries(playersData) : [];
     for (const [k, v] of entries) {
       if (k === 'count') continue;
       const playerArr: any = (v as any)?.player;
       if (!playerArr) continue;
 
-      // player[0] = array of info chunks
-      const infoChunks: any[] = Array.isArray(playerArr[0]) ? playerArr[0] : [];
+      // player[0] is the info-chunks array; fall back to treating playerArr itself as flat array
+      const infoChunks: any[] = Array.isArray(playerArr[0]) ? playerArr[0] : (Array.isArray(playerArr) ? playerArr : []);
       let player_key = '';
       let name = '';
       let team_abbr = '';
@@ -1532,7 +1564,8 @@ export async function fetchPlayerAverages(playerKeys: string[]): Promise<Map<str
     const batch = playerKeys.slice(i, i + BATCH);
     try {
       const keysStr = batch.join(',');
-      const data = await apiRequest(`/players;player_keys=${keysStr}/stats;type=averages`);
+      // Yahoo doesn't support type=averages — use type=season (totals) and divide by GP
+      const data = await apiRequest(`/players;player_keys=${keysStr}/stats;type=season`);
       const playersData = data?.fantasy_content?.players;
       if (!playersData) continue;
 
@@ -1542,7 +1575,7 @@ export async function fetchPlayerAverages(playerKeys: string[]): Promise<Map<str
         const playerArr: any = (v as any)?.player;
         if (!playerArr) continue;
 
-        // player[0] = info chunks, player[1] = stats chunk
+        // player[0] = info chunks array
         const infoChunks: any[] = Array.isArray(playerArr[0]) ? playerArr[0] : [];
         let player_key = '';
         for (const chunk of infoChunks) {
@@ -1550,17 +1583,35 @@ export async function fetchPlayerAverages(playerKeys: string[]): Promise<Map<str
         }
         if (!player_key) continue;
 
-        const statsChunk = playerArr[1];
-        const statsArr = statsChunk?.player_stats?.stats ?? statsChunk?.player_stats?.stats;
-        if (!statsArr) continue;
+        // Stats can appear in player[1], player[2], etc. — scan all chunks after [0]
+        let rawStats: any = null;
+        for (let idx = 1; idx < playerArr.length; idx++) {
+          const chunk = playerArr[idx];
+          if (chunk?.player_stats?.stats) { rawStats = chunk.player_stats.stats; break; }
+          if (chunk?.player_stats_totals?.stats) { rawStats = chunk.player_stats_totals.stats; break; }
+        }
+        if (!rawStats) continue;
 
-        const avgs: { [stat_id: string]: number } = {};
-        const statsEntries = Array.isArray(statsArr) ? statsArr : Object.values(statsArr);
+        const totals: { [stat_id: string]: number } = {};
+        const statsEntries: any[] = Array.isArray(rawStats)
+          ? rawStats
+          : Object.values(rawStats).filter((s: any) => s && typeof s === 'object' && s.stat);
         statsEntries.forEach((s: any) => {
           if (s?.stat?.stat_id != null) {
-            avgs[String(s.stat.stat_id)] = parseFloat(s.stat.value ?? '0') || 0;
+            totals[String(s.stat.stat_id)] = parseFloat(s.stat.value ?? '0') || 0;
           }
         });
+
+        if (Object.keys(totals).length === 0) continue;
+
+        // Convert season totals → per-game averages by dividing by GP (stat_id '0')
+        // Percentage stats (FG%, FT%, 3PT%) stay as-is — they're already a ratio
+        const PCT_STAT_IDS = new Set(['5', '8', '11']);
+        const gp = totals['0'] || 1; // avoid division by zero
+        const avgs: { [stat_id: string]: number } = {};
+        for (const [sid, val] of Object.entries(totals)) {
+          avgs[sid] = PCT_STAT_IDS.has(sid) ? val : val / gp;
+        }
         result.set(player_key, avgs);
       }
     } catch (err) {

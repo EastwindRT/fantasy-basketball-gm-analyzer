@@ -289,9 +289,34 @@ export default function CurrentSeason() {
     return proj;
   }
 
-  const hasProjections = scheduleData !== null && (myAvgs.size > 0 || oppAvgs.size > 0);
-  const myProjected  = hasProjections && myTeam  ? computeProjected(myRoster,  myAvgs,  myTeam.stats)  : null;
-  const oppProjected = hasProjections && oppTeam ? computeProjected(oppRoster, oppAvgs, oppTeam.stats) : null;
+  // Rate-based projection: always computable from current matchup stats alone
+  const TODAY_ISO     = new Date().toISOString().slice(0, 10);
+  const projWeekEnd   = weekEnd   ?? comingSundayISO();
+  const projWeekStart = weekStart ?? TODAY_ISO;
+  const daysPlayed    = Math.max(1, Math.floor(
+    (new Date(TODAY_ISO + 'T12:00:00').getTime() - new Date(projWeekStart + 'T12:00:00').getTime()) / 86400000,
+  ) + 1);
+  const daysRemaining = Math.max(0, Math.floor(
+    (new Date(projWeekEnd + 'T12:00:00').getTime() - new Date(TODAY_ISO + 'T12:00:00').getTime()) / 86400000,
+  ));
+
+  function computeRateProjection(currentStats: Record<string, number> | undefined): Record<string, number> {
+    const proj: Record<string, number> = {};
+    for (const cat of allCats) {
+      const cur = currentStats?.[cat.stat_id] ?? 0;
+      if (PCT_DEPS[cat.stat_id]) {
+        proj[cat.stat_id] = cur; // keep current % — can't extrapolate without makes/attempts splits
+      } else {
+        proj[cat.stat_id] = cur + (cur / daysPlayed) * daysRemaining;
+      }
+    }
+    return proj;
+  }
+
+  const hasRosterProj = scheduleData !== null && (myAvgs.size > 0 || oppAvgs.size > 0);
+  const myProjected  = myTeam  ? (hasRosterProj ? computeProjected(myRoster,  myAvgs,  myTeam.stats)  : computeRateProjection(myTeam.stats))  : null;
+  const oppProjected = oppTeam ? (hasRosterProj ? computeProjected(oppRoster, oppAvgs, oppTeam.stats) : computeRateProjection(oppTeam.stats)) : null;
+  const projLabel    = hasRosterProj ? 'roster-based' : loadingProj ? 'computing…' : 'rate estimate';
 
   // ── Category records ──
   const curRecord = (myTeam?.stats && oppTeam?.stats)
@@ -487,11 +512,10 @@ export default function CurrentSeason() {
                       <span className="text-[10px] uppercase tracking-widest font-semibold text-gray-500">
                         Projected Final
                       </span>
-                      {(weekEnd || weekStart) && (
-                        <span className="ml-2 text-[10px] text-gray-700">
-                          through {weekEnd ?? comingSundayISO()}
-                        </span>
-                      )}
+                      <span className="ml-2 text-[10px] text-gray-700">
+                        {projLabel}
+                        {(weekEnd || weekStart) && ` · through ${weekEnd ?? comingSundayISO()}`}
+                      </span>
                     </div>
                     {loadingProj && (
                       <span className="text-[11px] text-gray-600 animate-pulse">Computing…</span>
@@ -581,10 +605,6 @@ export default function CurrentSeason() {
                         );
                       })}
                     </>
-                  ) : !loadingProj && (
-                    <div className="px-5 pb-4 text-[12px] text-gray-600">
-                      Projections unavailable — roster data could not be loaded.
-                    </div>
                   )}
 
                   {/* Injury note */}
