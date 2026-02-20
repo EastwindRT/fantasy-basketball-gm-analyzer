@@ -1,15 +1,5 @@
 'use client';
 
-/**
- * Main Page Component
- *
- * Orchestrates the entire application flow:
- * - Input form for league ID and seasons
- * - Data fetching and processing (with parallel fetches for efficiency)
- * - Dashboard and GM detail views
- * - Error handling and loading states
- */
-
 import { useEffect, useState, useCallback } from 'react';
 import { useAppStore } from '@/lib/store';
 import { getAuthState, isTokenExpired, exchangeCodeForToken } from '@/lib/yahoo-api';
@@ -37,7 +27,9 @@ import ExportButton from '@/components/ExportButton';
 import CurrentSeason from '@/components/CurrentSeason';
 import ScheduleGrid from '@/components/ScheduleGrid';
 
-type ViewMode = 'historical' | 'current' | 'schedule';
+// null = landing page, 'live' = current season + schedule, 'historical' = GM analyzer
+type ViewMode = null | 'live' | 'historical';
+type LiveTab = 'season' | 'schedule';
 
 export default function Home() {
   const {
@@ -59,9 +51,10 @@ export default function Home() {
 
   const [isInitialized, setIsInitialized] = useState(false);
   const [isClearingCache, setIsClearingCache] = useState(false);
-  const [viewMode, setViewMode] = useState<ViewMode>('historical');
+  const [viewMode, setViewMode] = useState<ViewMode>(null);
+  const [liveTab, setLiveTab] = useState<LiveTab>('season');
 
-  // Auto-clear cache when app version changes (forces fresh data with new features like playoff stats)
+  // Auto-clear cache on version change
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const CACHE_VERSION = 'v3-draft-names';
@@ -69,7 +62,6 @@ export default function Home() {
     if (currentVersion !== CACHE_VERSION) {
       clearCache().then(() => {
         localStorage.setItem('app_cache_version', CACHE_VERSION);
-        console.log('Cache auto-cleared for new version:', CACHE_VERSION);
       }).catch(() => {});
     }
   }, []);
@@ -77,7 +69,6 @@ export default function Home() {
   // Handle OAuth callback
   useEffect(() => {
     if (typeof window === 'undefined') return;
-
     const urlParams = new URLSearchParams(window.location.search);
     const code = urlParams.get('code');
     const errorParam = urlParams.get('error');
@@ -96,18 +87,17 @@ export default function Home() {
         window.history.replaceState({}, '', '/');
         return;
       }
-      if (storedState) {
-        localStorage.removeItem('yahoo_oauth_state');
-      }
+      if (storedState) localStorage.removeItem('yahoo_oauth_state');
 
       exchangeCodeForToken(code)
         .then(() => {
           window.history.replaceState({}, '', '/');
           setError(null);
+          // After OAuth, land on live view
+          setViewMode('live');
           window.location.reload();
         })
         .catch((err) => {
-          console.error('Authentication error:', err);
           setError(`Failed to authenticate: ${err.message || 'Unknown error'}`);
           window.history.replaceState({}, '', '/');
         });
@@ -116,21 +106,18 @@ export default function Home() {
     setIsInitialized(true);
   }, [setError]);
 
-  // Handle cache clear
   const handleClearCache = useCallback(async () => {
     setIsClearingCache(true);
     try {
       await clearCache();
       alert('Cache cleared successfully!');
-    } catch (err) {
-      console.error('Failed to clear cache:', err);
+    } catch {
       alert('Failed to clear cache');
     } finally {
       setIsClearingCache(false);
     }
   }, []);
 
-  // Helper: fetch or get cached data
   const fetchOrCache = useCallback(async (
     cacheKey: string,
     fetcher: () => Promise<any>,
@@ -143,7 +130,7 @@ export default function Home() {
     return data;
   }, []);
 
-  // Fetch data when league is set
+  // Fetch historical data when league is set
   useEffect(() => {
     if (!currentLeagueKey || currentSeasons.length === 0 || !isInitialized) return;
 
@@ -161,8 +148,6 @@ export default function Home() {
 
         setLoadingMessage('Fetching league data...');
 
-        // Fetch league info using the most recent season's key
-        // Use the season-specific key directly if available (already complete from discovery)
         const mostRecentSeason = currentSeasons[currentSeasons.length - 1];
         const leagueKey = seasonLeagueKeys[mostRecentSeason]
           ? seasonLeagueKeys[mostRecentSeason]
@@ -174,7 +159,6 @@ export default function Home() {
         );
         setLeagueData(leagueData);
 
-        // Data structures to collect across seasons
         const teamsBySeason: { [season: string]: any[] } = {};
         const transactionsBySeason: { [season: string]: any[] } = {};
         const matchupsBySeason: { [season: string]: MatchupData[] } = {};
@@ -184,41 +168,18 @@ export default function Home() {
 
         for (let i = 0; i < currentSeasons.length; i++) {
           const season = currentSeasons[i];
-          // If seasonLeagueKeys has an entry for this season, it's already a complete key
-          // from league discovery (e.g., "454.l.12345") — use it directly.
-          // Only call buildLeagueKey when falling back to the base league key.
           const seasonLeagueKey = seasonLeagueKeys[season]
             ? seasonLeagueKeys[season]
             : buildLeagueKey(currentLeagueKey, season);
 
-          setLoadingMessage(`Fetching data for ${season}-${(parseInt(season) + 1).toString().slice(-2)} season (${i + 1}/${currentSeasons.length})...`);
+          setLoadingMessage(`Fetching ${season}-${(parseInt(season) + 1).toString().slice(-2)} season (${i + 1}/${currentSeasons.length})...`);
 
-          // Fetch standings, transactions, draft results, stat categories, and league settings in PARALLEL
           const [standings, transactions, draftResults, statCategories, settings] = await Promise.all([
-            fetchOrCache(
-              getCacheKey(seasonLeagueKey, season, 'standings'),
-              () => fetchStandings(seasonLeagueKey)
-            ).catch(err => { console.warn(`Failed to fetch standings for ${season}:`, err); return []; }),
-
-            fetchOrCache(
-              getCacheKey(seasonLeagueKey, season, 'transactions'),
-              () => fetchTransactions(seasonLeagueKey)
-            ).catch(err => { console.warn(`Failed to fetch transactions for ${season}:`, err); return []; }),
-
-            fetchOrCache(
-              getCacheKey(seasonLeagueKey, season, 'draftresults'),
-              () => fetchDraftResults(seasonLeagueKey)
-            ).catch(err => { console.warn(`Failed to fetch draft results for ${season}:`, err); return []; }),
-
-            fetchOrCache(
-              getCacheKey(seasonLeagueKey, season, 'statcategories'),
-              () => fetchStatCategories(seasonLeagueKey)
-            ).catch(err => { console.warn(`Failed to fetch stat categories for ${season}:`, err); return []; }),
-
-            fetchOrCache(
-              getCacheKey(seasonLeagueKey, season, 'leaguesettings'),
-              () => fetchLeagueSettings(seasonLeagueKey)
-            ).catch(err => { console.warn(`Failed to fetch league settings for ${season}:`, err); return null; }),
+            fetchOrCache(getCacheKey(seasonLeagueKey, season, 'standings'), () => fetchStandings(seasonLeagueKey)).catch(() => []),
+            fetchOrCache(getCacheKey(seasonLeagueKey, season, 'transactions'), () => fetchTransactions(seasonLeagueKey)).catch(() => []),
+            fetchOrCache(getCacheKey(seasonLeagueKey, season, 'draftresults'), () => fetchDraftResults(seasonLeagueKey)).catch(() => []),
+            fetchOrCache(getCacheKey(seasonLeagueKey, season, 'statcategories'), () => fetchStatCategories(seasonLeagueKey)).catch(() => []),
+            fetchOrCache(getCacheKey(seasonLeagueKey, season, 'leaguesettings'), () => fetchLeagueSettings(seasonLeagueKey)).catch(() => null),
           ]);
 
           teamsBySeason[season] = standings;
@@ -227,49 +188,32 @@ export default function Home() {
           statCategoriesBySeason[season] = statCategories;
           if (settings) leagueSettingsBySeason[season] = settings;
 
-          // Fetch matchups (these are sequential per week but we cache the whole batch)
           setLoadingMessage(`Fetching matchups for ${season}-${(parseInt(season) + 1).toString().slice(-2)}...`);
-          let matchups: MatchupData[] = [];
           try {
-            matchups = await fetchOrCache(
+            const matchups = await fetchOrCache(
               getCacheKey(seasonLeagueKey, season, 'matchups'),
               () => fetchAllMatchups(seasonLeagueKey, 1, 25)
             );
-          } catch (err) {
-            console.warn(`Failed to fetch matchups for ${season}:`, err);
+            matchupsBySeason[season] = matchups;
+          } catch {
+            matchupsBySeason[season] = [];
           }
-          matchupsBySeason[season] = matchups;
         }
 
         setLoadingMessage('Processing analytics...');
-
-        // Process all data into GM analytics
         const analytics = processGMAnalytics(
-          teamsBySeason,
-          transactionsBySeason,
-          matchupsBySeason,
-          draftResultsBySeason,
-          statCategoriesBySeason,
-          gmUsernameFilter || undefined,
-          leagueSettingsBySeason
+          teamsBySeason, transactionsBySeason, matchupsBySeason,
+          draftResultsBySeason, statCategoriesBySeason,
+          gmUsernameFilter || undefined, leagueSettingsBySeason
         );
-
         setGMAnalytics(analytics);
         setLoadingMessage('');
       } catch (err: any) {
-        console.error('Data fetching error:', err);
         let errorMessage = `Failed to fetch data: ${err.message}`;
-
-        if (err.response?.status === 401) {
-          errorMessage = 'Authentication expired or insufficient permissions. Please re-authenticate.';
-        } else if (err.response?.status === 403) {
-          errorMessage = 'Access denied. This appears to be a private league. Make sure you authenticated with an account that has access.';
-        } else if (err.response?.status === 404) {
-          errorMessage = 'League not found. Please check the league ID.';
-        } else if (err.response?.status === 429) {
-          errorMessage = 'Rate limit exceeded. Please wait a moment and try again.';
-        }
-
+        if (err.response?.status === 401) errorMessage = 'Authentication expired. Please re-authenticate.';
+        else if (err.response?.status === 403) errorMessage = 'Access denied. Make sure you authenticated with an account that has access.';
+        else if (err.response?.status === 404) errorMessage = 'League not found. Please check the league ID.';
+        else if (err.response?.status === 429) errorMessage = 'Rate limit exceeded. Please wait and try again.';
         setError(errorMessage);
       } finally {
         setLoading(false);
@@ -278,175 +222,211 @@ export default function Home() {
 
     fetchData();
   }, [
-    currentLeagueKey,
-    currentSeasons,
-    seasonLeagueKeys,
-    gmUsernameFilter,
-    isInitialized,
-    setLeagueData,
-    setGMAnalytics,
-    setLoading,
-    setLoadingMessage,
-    setError,
-    fetchOrCache,
+    currentLeagueKey, currentSeasons, seasonLeagueKeys, gmUsernameFilter,
+    isInitialized, setLeagueData, setGMAnalytics, setLoading,
+    setLoadingMessage, setError, fetchOrCache,
   ]);
 
-  const NAV_TABS: { id: ViewMode; label: string; icon: string }[] = [
-    { id: 'historical', label: 'Historical Analysis', icon: '📊' },
-    { id: 'current', label: 'Current Season', icon: '🏀' },
-    { id: 'schedule', label: 'NBA Schedule', icon: '📅' },
-  ];
+  // ─── Landing Page ───────────────────────────────────────────────────────────
+  if (viewMode === null) {
+    return (
+      <main className="min-h-screen bg-gray-950 flex flex-col items-center justify-center px-4">
+        {/* Logo / Title */}
+        <div className="text-center mb-16">
+          <div className="text-5xl mb-4">🏆</div>
+          <h1 className="text-4xl font-bold text-white tracking-tight mb-3">
+            Fantasy Basketball
+          </h1>
+          <p className="text-gray-400 text-lg">
+            Your league, your stats, your edge.
+          </p>
+        </div>
 
-  return (
-    <main className="min-h-screen bg-gray-50 dark:bg-gray-900">
-      {/* ── Top Navigation ── */}
-      <div className="sticky top-0 z-20 bg-white/90 dark:bg-gray-900/90 backdrop-blur-xl border-b border-gray-200 dark:border-gray-700 shadow-sm">
-        <div className="max-w-7xl mx-auto px-4">
-          <div className="flex items-center justify-between gap-4 h-14">
-            {/* Brand */}
-            <div className="flex items-center gap-2 shrink-0">
-              <span className="text-xl">🏆</span>
-              <span className="font-bold text-gray-900 dark:text-white text-sm hidden sm:block">Fantasy GM</span>
+        {/* Two cards */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 w-full max-w-2xl">
+          {/* Live League */}
+          <button
+            onClick={() => setViewMode('live')}
+            className="group relative flex flex-col items-start p-8 rounded-2xl bg-white/5 border border-white/10 hover:bg-white/10 hover:border-white/20 transition-all duration-200 text-left cursor-pointer"
+          >
+            <div className="w-12 h-12 rounded-xl bg-orange-500/20 flex items-center justify-center mb-5 group-hover:bg-orange-500/30 transition-colors">
+              <span className="text-2xl">🏀</span>
             </div>
+            <h2 className="text-xl font-semibold text-white mb-2">Live League</h2>
+            <p className="text-gray-400 text-sm leading-relaxed">
+              Current matchup, standings, and NBA schedule heatmap for this week.
+            </p>
+            <div className="mt-6 flex items-center gap-1.5 text-orange-400 text-sm font-medium group-hover:gap-2.5 transition-all">
+              Open <span>→</span>
+            </div>
+          </button>
 
-            {/* Nav tabs */}
-            <nav className="flex items-center gap-1">
-              {NAV_TABS.map(tab => (
-                <button
-                  key={tab.id}
-                  onClick={() => setViewMode(tab.id)}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
-                    viewMode === tab.id
-                      ? 'bg-blue-600 text-white shadow-sm'
-                      : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'
-                  }`}
-                >
-                  <span>{tab.icon}</span>
-                  <span className="hidden md:block">{tab.label}</span>
-                </button>
-              ))}
-            </nav>
+          {/* Historical GM Standings */}
+          <button
+            onClick={() => setViewMode('historical')}
+            className="group relative flex flex-col items-start p-8 rounded-2xl bg-white/5 border border-white/10 hover:bg-white/10 hover:border-white/20 transition-all duration-200 text-left cursor-pointer"
+          >
+            <div className="w-12 h-12 rounded-xl bg-blue-500/20 flex items-center justify-center mb-5 group-hover:bg-blue-500/30 transition-colors">
+              <span className="text-2xl">📊</span>
+            </div>
+            <h2 className="text-xl font-semibold text-white mb-2">Historical GM Standings</h2>
+            <p className="text-gray-400 text-sm leading-relaxed">
+              Multi-season performance analytics, head-to-head records, and GOAT rankings.
+            </p>
+            <div className="mt-6 flex items-center gap-1.5 text-blue-400 text-sm font-medium group-hover:gap-2.5 transition-all">
+              Open <span>→</span>
+            </div>
+          </button>
+        </div>
+      </main>
+    );
+  }
 
-            {/* Right-side actions (only in historical mode) */}
-            {viewMode === 'historical' && currentLeagueKey && (
-              <div className="flex items-center gap-2 shrink-0">
+  // ─── Shared nav bar (shown in live / historical) ─────────────────────────────
+  const NavBar = () => (
+    <div className="sticky top-0 z-20 bg-gray-950/90 backdrop-blur-xl border-b border-white/10">
+      <div className="max-w-7xl mx-auto px-4 h-14 flex items-center justify-between gap-4">
+        {/* Back to home */}
+        <button
+          onClick={() => { setViewMode(null); reset(); }}
+          className="flex items-center gap-2 text-gray-400 hover:text-white transition-colors text-sm font-medium"
+        >
+          <span className="text-lg">←</span>
+          <span className="hidden sm:block">Home</span>
+        </button>
+
+        {/* Mode-specific tabs */}
+        {viewMode === 'live' && (
+          <div className="flex items-center gap-1 bg-white/5 rounded-xl p-1">
+            {([
+              { id: 'season' as LiveTab, label: 'My Season', icon: '🏀' },
+              { id: 'schedule' as LiveTab, label: 'NBA Schedule', icon: '📅' },
+            ]).map(tab => (
+              <button
+                key={tab.id}
+                onClick={() => setLiveTab(tab.id)}
+                className={`flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-sm font-medium transition-all ${
+                  liveTab === tab.id
+                    ? 'bg-orange-500 text-white shadow-sm'
+                    : 'text-gray-400 hover:text-white'
+                }`}
+              >
+                <span>{tab.icon}</span>
+                <span>{tab.label}</span>
+              </button>
+            ))}
+          </div>
+        )}
+
+        {viewMode === 'historical' && (
+          <span className="text-sm font-medium text-gray-300">Historical GM Standings</span>
+        )}
+
+        {/* Right utilities */}
+        {viewMode === 'historical' && currentLeagueKey && (
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => reset()}
+              className="px-3 py-1.5 text-xs font-medium text-gray-400 hover:text-white bg-white/5 hover:bg-white/10 rounded-lg transition-colors"
+            >
+              Change League
+            </button>
+            <button
+              onClick={handleClearCache}
+              disabled={isClearingCache}
+              className="px-3 py-1.5 text-xs font-medium text-red-400 hover:text-red-300 bg-white/5 hover:bg-white/10 rounded-lg transition-colors disabled:opacity-40"
+            >
+              {isClearingCache ? 'Clearing…' : 'Clear Cache'}
+            </button>
+          </div>
+        )}
+
+        {viewMode === 'live' && (
+          <div className="w-24" /> /* spacer to keep tabs centred */
+        )}
+      </div>
+    </div>
+  );
+
+  // ─── Live League view ────────────────────────────────────────────────────────
+  if (viewMode === 'live') {
+    return (
+      <div className="min-h-screen bg-gray-950">
+        <NavBar />
+        <div className="max-w-7xl mx-auto px-4 py-8">
+          {liveTab === 'season' && <CurrentSeason />}
+          {liveTab === 'schedule' && (
+            <>
+              <div className="mb-6">
+                <h2 className="text-2xl font-bold text-white mb-1">NBA Schedule Grid</h2>
+                <p className="text-gray-400 text-sm">
+                  Identify which teams have the best schedule this week — plan your streaming adds and waiver pickups.
+                </p>
+              </div>
+              <ScheduleGrid />
+            </>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // ─── Historical GM Standings view ────────────────────────────────────────────
+  return (
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
+      <NavBar />
+      <div className="max-w-7xl mx-auto px-4 py-8">
+        {error && (
+          <ErrorDisplay
+            error={error}
+            onDismiss={() => useAppStore.getState().setError(null)}
+          />
+        )}
+
+        {!currentLeagueKey ? (
+          <InputForm />
+        ) : (
+          <div className="space-y-6">
+            {/* Utility bar */}
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div className="flex gap-2 flex-wrap">
                 <button
                   onClick={reset}
-                  className="px-3 py-1.5 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors text-xs font-medium"
+                  className="px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors text-sm"
                 >
-                  Change League
+                  Analyze Different League
+                </button>
+                <button
+                  onClick={async () => {
+                    const { clearAuthState, initiateAuth } = await import('@/lib/yahoo-api');
+                    clearAuthState();
+                    initiateAuth(true);
+                  }}
+                  className="px-4 py-2 bg-orange-100 dark:bg-orange-900/40 text-orange-700 dark:text-orange-300 rounded-lg hover:bg-orange-200 dark:hover:bg-orange-900/60 transition-colors text-sm"
+                >
+                  Switch Account
                 </button>
                 <button
                   onClick={handleClearCache}
                   disabled={isClearingCache}
-                  className="px-3 py-1.5 bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-400 rounded-lg hover:bg-red-100 dark:hover:bg-red-900/50 transition-colors text-xs font-medium disabled:opacity-50"
+                  className="px-4 py-2 bg-red-100 dark:bg-red-900/40 text-red-600 dark:text-red-400 rounded-lg hover:bg-red-200 dark:hover:bg-red-900/60 transition-colors text-sm disabled:opacity-50"
                 >
-                  {isClearingCache ? 'Clearing...' : 'Clear Cache'}
+                  {isClearingCache ? 'Clearing…' : 'Clear Cache'}
                 </button>
               </div>
+              <ExportButton />
+            </div>
+
+            {isLoading ? (
+              <LoadingSpinner message={loadingMessage} />
+            ) : selectedGM ? (
+              <GMDetailView />
+            ) : (
+              <Dashboard />
             )}
           </div>
-        </div>
-      </div>
-
-      {/* ── Page Content ── */}
-      <div className="max-w-7xl mx-auto px-4 py-8">
-        {/* Historical Analysis */}
-        {viewMode === 'historical' && (
-          <>
-            <header className="mb-8 text-center">
-              <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">
-                GM Historical Analyzer
-              </h1>
-              <p className="text-gray-600 dark:text-gray-400">
-                Analyze and compare General Manager performances across multiple seasons
-              </p>
-            </header>
-
-            {error && (
-              <ErrorDisplay
-                error={error}
-                onDismiss={() => useAppStore.getState().setError(null)}
-              />
-            )}
-
-            {!currentLeagueKey ? (
-              <InputForm />
-            ) : (
-              <div className="space-y-6">
-                <div className="flex items-center justify-between flex-wrap gap-2">
-                  <div className="flex gap-2 flex-wrap">
-                    <button
-                      onClick={reset}
-                      className="px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors"
-                    >
-                      Analyze Different League
-                    </button>
-                    <button
-                      onClick={async () => {
-                        const { clearAuthState, initiateAuth } = await import('@/lib/yahoo-api');
-                        clearAuthState();
-                        initiateAuth(true);
-                      }}
-                      className="px-4 py-2 bg-orange-200 dark:bg-orange-800 text-orange-700 dark:text-orange-300 rounded-lg hover:bg-orange-300 dark:hover:bg-orange-700 transition-colors text-sm"
-                      title="Switch to a different Yahoo account"
-                    >
-                      Switch Account
-                    </button>
-                    <button
-                      onClick={handleClearCache}
-                      disabled={isClearingCache}
-                      className="px-4 py-2 bg-red-100 dark:bg-red-900 text-red-700 dark:text-red-300 rounded-lg hover:bg-red-200 dark:hover:bg-red-800 transition-colors text-sm disabled:opacity-50"
-                      title="Clear all cached data to fetch fresh data from Yahoo"
-                    >
-                      {isClearingCache ? 'Clearing...' : 'Clear Cache'}
-                    </button>
-                  </div>
-                  <ExportButton />
-                </div>
-
-                {isLoading ? (
-                  <LoadingSpinner message={loadingMessage} />
-                ) : selectedGM ? (
-                  <GMDetailView />
-                ) : (
-                  <Dashboard />
-                )}
-              </div>
-            )}
-          </>
-        )}
-
-        {/* Current Season */}
-        {viewMode === 'current' && (
-          <>
-            <header className="mb-8 text-center">
-              <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">
-                Current Season
-              </h1>
-              <p className="text-gray-600 dark:text-gray-400">
-                Live standings and current matchup for your active Yahoo league
-              </p>
-            </header>
-            <CurrentSeason />
-          </>
-        )}
-
-        {/* NBA Schedule Heatmap */}
-        {viewMode === 'schedule' && (
-          <>
-            <header className="mb-6">
-              <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">
-                NBA Schedule Grid
-              </h1>
-              <p className="text-gray-600 dark:text-gray-400">
-                Which teams play the most this week? Select a date range to plan your waiver pickups and streaming adds.
-              </p>
-            </header>
-            <ScheduleGrid />
-          </>
         )}
       </div>
-    </main>
+    </div>
   );
 }

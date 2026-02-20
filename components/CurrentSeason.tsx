@@ -129,15 +129,19 @@ export default function CurrentSeason() {
 
   if (!isAuth) {
     return (
-      <div className="flex flex-col items-center justify-center py-24 gap-6">
-        <div className="text-6xl">🏀</div>
-        <h2 className="text-2xl font-bold text-gray-900 dark:text-white">Current Season</h2>
-        <p className="text-gray-500 dark:text-gray-400 text-center max-w-sm">
-          Sign in with your Yahoo account to view your current season stats and live matchup.
-        </p>
+      <div className="flex flex-col items-center justify-center py-32 gap-6">
+        <div className="w-16 h-16 rounded-2xl bg-orange-500/20 flex items-center justify-center">
+          <span className="text-3xl">🏀</span>
+        </div>
+        <div className="text-center">
+          <h2 className="text-2xl font-bold text-white mb-2">Sign in to view your league</h2>
+          <p className="text-gray-400 text-sm max-w-xs">
+            Connect your Yahoo account to see your current matchup and standings.
+          </p>
+        </div>
         <button
           onClick={() => initiateAuth()}
-          className="px-6 py-3 bg-purple-600 hover:bg-purple-700 text-white font-semibold rounded-xl transition-colors"
+          className="px-6 py-3 bg-orange-500 hover:bg-orange-400 text-white font-semibold rounded-xl transition-colors"
         >
           Login with Yahoo
         </button>
@@ -149,37 +153,37 @@ export default function CurrentSeason() {
     <div className="space-y-6">
       {/* League selector */}
       <div className="flex flex-wrap items-center gap-3">
-        <label className="text-sm font-medium text-gray-700 dark:text-gray-300">League</label>
+        <label className="text-sm font-medium text-gray-400">League</label>
         {loadingLeagues ? (
-          <span className="text-sm text-gray-400 animate-pulse">Loading leagues...</span>
+          <span className="text-sm text-gray-500 animate-pulse">Loading leagues…</span>
         ) : leagues.length === 0 ? (
-          <span className="text-sm text-gray-400">No current-season leagues found.</span>
+          <span className="text-sm text-gray-500">No current-season leagues found.</span>
         ) : (
           <select
             value={selectedKey}
             onChange={e => setSelectedKey(e.target.value)}
-            className="border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-1.5 text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="border border-white/10 rounded-lg px-3 py-1.5 text-sm bg-white/5 text-white focus:outline-none focus:ring-2 focus:ring-orange-500"
           >
             {leagues.map(l => (
-              <option key={l.league_key} value={l.league_key}>
+              <option key={l.league_key} value={l.league_key} className="bg-gray-900">
                 {l.name} ({l.season})
               </option>
             ))}
           </select>
         )}
         {leagueName && (
-          <span className="text-sm text-gray-500 dark:text-gray-400">
+          <span className="text-sm text-gray-400">
             {leagueName}
             {currentWeek != null && ` — Week ${currentWeek}`}
           </span>
         )}
         {loadingData && (
-          <span className="text-sm text-gray-400 animate-pulse">Fetching data...</span>
+          <span className="text-sm text-gray-500 animate-pulse">Fetching data…</span>
         )}
       </div>
 
       {error && (
-        <div className="text-red-600 dark:text-red-400 text-sm bg-red-50 dark:bg-red-900/20 px-4 py-2 rounded-lg">
+        <div className="text-red-400 text-sm bg-red-500/10 border border-red-500/20 px-4 py-2 rounded-lg">
           {error}
         </div>
       )}
@@ -187,13 +191,13 @@ export default function CurrentSeason() {
       {!loadingData && standings.length > 0 && (
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
           {/* ── Current Matchup ── */}
-          <div className="bg-white/80 dark:bg-[#1c1c1e]/80 backdrop-blur-xl border border-gray-200/60 dark:border-white/10 rounded-2xl shadow-sm overflow-hidden">
-            <div className="px-6 py-5 border-b border-gray-100 dark:border-white/10">
-              <h3 className="text-[17px] font-semibold text-gray-900 dark:text-white">
+          <div className="bg-white/5 border border-white/10 rounded-2xl overflow-hidden">
+            <div className="px-6 py-5 border-b border-white/10">
+              <h3 className="text-[17px] font-semibold text-white">
                 Current Matchup {currentWeek != null ? `— Week ${currentWeek}` : ''}
               </h3>
               {userMatchup && catRecord && (
-                <p className="text-[13px] text-gray-500 dark:text-gray-400 mt-0.5">
+                <p className="text-[13px] text-gray-400 mt-0.5">
                   Your record:{' '}
                   <span className="text-green-600 dark:text-green-400 font-semibold">{catRecord.won}W</span>
                   {' / '}
@@ -266,21 +270,21 @@ export default function CurrentSeason() {
           </div>
 
           {/* ── League Standings ── */}
-          <div className="bg-white/80 dark:bg-[#1c1c1e]/80 backdrop-blur-xl border border-gray-200/60 dark:border-white/10 rounded-2xl shadow-sm overflow-hidden">
-            <div className="px-6 py-5 border-b border-gray-100 dark:border-white/10">
-              <h3 className="text-[17px] font-semibold text-gray-900 dark:text-white">League Standings</h3>
-              <p className="text-[13px] text-gray-500 dark:text-gray-400 mt-0.5">{standings.length} teams</p>
+          <div className="bg-white/5 border border-white/10 rounded-2xl overflow-hidden">
+            <div className="px-6 py-5 border-b border-white/10">
+              <h3 className="text-[17px] font-semibold text-white">League Standings</h3>
+              <p className="text-[13px] text-gray-400 mt-0.5">{standings.length} teams</p>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-gray-100 dark:border-white/10 text-[11px] text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                    <th className="px-4 py-2 text-left font-medium">Rank</th>
-                    <th className="px-4 py-2 text-left font-medium">Team</th>
-                    <th className="px-4 py-2 text-center font-medium">W</th>
-                    <th className="px-4 py-2 text-center font-medium">L</th>
-                    <th className="px-4 py-2 text-center font-medium">T</th>
-                    <th className="px-4 py-2 text-center font-medium">Win%</th>
+                    <th className="px-4 py-2 text-left font-medium text-gray-400">Rank</th>
+                    <th className="px-4 py-2 text-left font-medium text-gray-400">Team</th>
+                    <th className="px-4 py-2 text-center font-medium text-gray-400">W</th>
+                    <th className="px-4 py-2 text-center font-medium text-gray-400">L</th>
+                    <th className="px-4 py-2 text-center font-medium text-gray-400">T</th>
+                    <th className="px-4 py-2 text-center font-medium text-gray-400">Win%</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -291,13 +295,13 @@ export default function CurrentSeason() {
                     return (
                       <tr
                         key={team.team_key}
-                        className={`border-b border-gray-50 dark:border-white/5 ${
+                        className={`border-b border-white/5 ${
                           isMe
-                            ? 'bg-blue-50 dark:bg-blue-900/20'
-                            : idx % 2 === 0 ? '' : 'bg-gray-50/50 dark:bg-white/5'
+                            ? 'bg-orange-500/10'
+                            : idx % 2 === 0 ? '' : 'bg-white/3'
                         }`}
                       >
-                        <td className="px-4 py-2.5 text-gray-500 dark:text-gray-400 font-medium">
+                        <td className="px-4 py-2.5 text-gray-400 font-medium">
                           {team.standings.rank}
                         </td>
                         <td className="px-4 py-2.5">
@@ -306,7 +310,7 @@ export default function CurrentSeason() {
                               <span className="text-[10px] font-bold px-1.5 py-0.5 bg-blue-600 text-white rounded">YOU</span>
                             )}
                             <div>
-                              <div className={`font-semibold ${isMe ? 'text-blue-700 dark:text-blue-300' : 'text-gray-900 dark:text-white'}`}>
+                              <div className={`font-semibold ${isMe ? 'text-orange-300' : 'text-white'}`}>
                                 {team.name}
                               </div>
                               <div className="text-[11px] text-gray-400 dark:text-gray-500">{team.manager.nickname}</div>
@@ -322,7 +326,7 @@ export default function CurrentSeason() {
                         <td className="px-4 py-2.5 text-center text-gray-500 dark:text-gray-400">
                           {team.standings.ties}
                         </td>
-                        <td className="px-4 py-2.5 text-center font-medium text-gray-700 dark:text-gray-300">
+                        <td className="px-4 py-2.5 text-center font-medium text-gray-300">
                           {(winPct * 100).toFixed(1)}%
                         </td>
                       </tr>
@@ -337,9 +341,9 @@ export default function CurrentSeason() {
 
       {/* All matchups (when user team not identified, or as extra context) */}
       {!loadingData && matchups.length > 0 && !userTeam && (
-        <div className="bg-white/80 dark:bg-[#1c1c1e]/80 backdrop-blur-xl border border-gray-200/60 dark:border-white/10 rounded-2xl shadow-sm overflow-hidden">
-          <div className="px-6 py-5 border-b border-gray-100 dark:border-white/10">
-            <h3 className="text-[17px] font-semibold text-gray-900 dark:text-white">
+        <div className="bg-white/5 border border-white/10 rounded-2xl overflow-hidden">
+          <div className="px-6 py-5 border-b border-white/10">
+            <h3 className="text-[17px] font-semibold text-white">
               All Matchups — Week {currentWeek}
             </h3>
           </div>

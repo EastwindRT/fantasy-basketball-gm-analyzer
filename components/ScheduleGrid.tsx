@@ -84,29 +84,29 @@ export default function ScheduleGrid() {
   return (
     <div className="w-full space-y-4">
       {/* Controls */}
-      <div className="flex flex-wrap items-center gap-3">
+      <div className="flex flex-wrap items-center gap-3 text-gray-300">
         {/* From date */}
         <div className="flex items-center gap-2">
-          <label className="text-sm font-medium text-gray-600 dark:text-gray-400 whitespace-nowrap">From</label>
+          <label className="text-sm font-medium text-gray-400 whitespace-nowrap">From</label>
           <input
             type="date"
             value={fromDate}
             onChange={e => setFromDate(e.target.value)}
-            className="border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-1.5 text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="border border-white/10 rounded-lg px-3 py-1.5 text-sm bg-white/5 text-white focus:outline-none focus:ring-2 focus:ring-orange-500"
           />
         </div>
 
         {/* Days selector */}
         <div className="flex items-center gap-1.5">
-          <span className="text-sm font-medium text-gray-600 dark:text-gray-400">Period</span>
+          <span className="text-sm font-medium text-gray-400">Period</span>
           {[7, 14, 21].map(d => (
             <button
               key={d}
               onClick={() => setDays(d)}
               className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
                 days === d
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
+                  ? 'bg-orange-500 text-white'
+                  : 'bg-white/5 text-gray-300 hover:bg-white/10'
               }`}
             >
               {d}d
@@ -116,15 +116,15 @@ export default function ScheduleGrid() {
 
         {/* Conference filter */}
         <div className="flex items-center gap-1.5">
-          <span className="text-sm font-medium text-gray-600 dark:text-gray-400">Conf</span>
+          <span className="text-sm font-medium text-gray-400">Conf</span>
           {(['All', 'East', 'West'] as const).map(c => (
             <button
               key={c}
               onClick={() => setConfFilter(c)}
               className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
                 confFilter === c
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
+                  ? 'bg-orange-500 text-white'
+                  : 'bg-white/5 text-gray-300 hover:bg-white/10'
               }`}
             >
               {c}
@@ -133,12 +133,12 @@ export default function ScheduleGrid() {
         </div>
 
         {loading && (
-          <span className="text-sm text-gray-500 dark:text-gray-400 animate-pulse">Loading...</span>
+          <span className="text-sm text-gray-500 animate-pulse">Loading...</span>
         )}
       </div>
 
       {/* Legend */}
-      <div className="flex items-center gap-4 text-xs text-gray-600 dark:text-gray-400">
+      <div className="flex items-center gap-4 text-xs text-gray-400">
         <span className="font-medium">Games:</span>
         {[
           { label: '0', cls: 'bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-600' },
@@ -151,35 +151,35 @@ export default function ScheduleGrid() {
             {label}
           </span>
         ))}
-        <span className="text-gray-400 dark:text-gray-500 ml-2">Hover a cell for opponent info</span>
+        <span className="text-gray-500 ml-2">Hover a cell for opponent info</span>
       </div>
 
       {error && (
-        <div className="text-red-600 dark:text-red-400 text-sm bg-red-50 dark:bg-red-900/20 px-4 py-2 rounded-lg">
+        <div className="text-red-400 text-sm bg-red-500/10 border border-red-500/20 px-4 py-2 rounded-lg">
           {error}
         </div>
       )}
 
       {/* Grid */}
       {data && !loading && (
-        <div className="relative overflow-x-auto rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-sm">
+        <div className="relative overflow-x-auto rounded-xl border border-white/10 bg-white/5 shadow-sm">
           <table className="text-xs w-full border-collapse">
             <thead>
-              <tr className="border-b border-gray-200 dark:border-gray-700">
+              <tr className="border-b border-white/10">
                 {/* Team header */}
-                <th className="sticky left-0 z-10 bg-gray-50 dark:bg-gray-800 px-3 py-2 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 border-r border-gray-200 dark:border-gray-700 min-w-[120px]">
+                <th className="sticky left-0 z-10 bg-gray-900 px-3 py-2 text-left text-xs font-semibold text-gray-400 border-r border-white/10 min-w-[120px]">
                   Team
                 </th>
                 {dates.map(iso => {
                   const { day, date } = formatDateLabel(iso);
                   return (
-                    <th key={iso} className="px-1 py-2 text-center font-medium text-gray-600 dark:text-gray-400 min-w-[44px]">
-                      <div className="text-[10px] text-gray-400 dark:text-gray-500">{day}</div>
+                    <th key={iso} className="px-1 py-2 text-center font-medium text-gray-400 min-w-[44px]">
+                      <div className="text-[10px] text-gray-500">{day}</div>
                       <div>{date}</div>
                     </th>
                   );
                 })}
-                <th className="px-3 py-2 text-center font-semibold text-gray-700 dark:text-gray-300 min-w-[48px]">
+                <th className="px-3 py-2 text-center font-semibold text-gray-300 min-w-[48px]">
                   Total
                 </th>
               </tr>
@@ -188,12 +188,12 @@ export default function ScheduleGrid() {
               {filtered.map((team, idx) => (
                 <tr
                   key={team.tricode}
-                  className={`border-b border-gray-100 dark:border-gray-800 ${
-                    idx % 2 === 0 ? '' : 'bg-gray-50/50 dark:bg-gray-800/30'
+                  className={`border-b border-white/5 ${
+                    idx % 2 === 0 ? '' : 'bg-white/3'
                   }`}
                 >
                   {/* Team name cell */}
-                  <td className="sticky left-0 z-10 bg-white dark:bg-gray-900 border-r border-gray-200 dark:border-gray-700 px-3 py-1.5">
+                  <td className="sticky left-0 z-10 bg-gray-950 border-r border-white/10 px-3 py-1.5">
                     <div className="flex items-center gap-2">
                       <span
                         className={`text-[9px] font-bold px-1 py-0.5 rounded ${
@@ -205,8 +205,8 @@ export default function ScheduleGrid() {
                         {team.conference[0]}
                       </span>
                       <div>
-                        <div className="font-semibold text-gray-900 dark:text-white text-[11px]">{team.tricode}</div>
-                        <div className="text-[9px] text-gray-500 dark:text-gray-400 leading-none">{team.city}</div>
+                        <div className="font-semibold text-white text-[11px]">{team.tricode}</div>
+                        <div className="text-[9px] text-gray-500 leading-none">{team.city}</div>
                       </div>
                     </div>
                   </td>
@@ -257,9 +257,9 @@ export default function ScheduleGrid() {
 
       {/* Summary stats */}
       {data && !loading && filtered.length > 0 && (
-        <div className="flex flex-wrap gap-4 text-sm text-gray-600 dark:text-gray-400">
+        <div className="flex flex-wrap gap-4 text-sm text-gray-400">
           <span>
-            <span className="font-semibold text-gray-900 dark:text-white">{filtered.length}</span> teams shown
+            <span className="font-semibold text-white">{filtered.length}</span> teams shown
           </span>
           <span>
             <span className="font-semibold text-green-600 dark:text-green-400">
@@ -270,7 +270,7 @@ export default function ScheduleGrid() {
           </span>
           <span>
             Avg games:{' '}
-            <span className="font-semibold text-gray-900 dark:text-white">
+            <span className="font-semibold text-white">
               {(filtered.reduce((s, t) => s + t.total, 0) / filtered.length).toFixed(1)}
             </span>
           </span>
