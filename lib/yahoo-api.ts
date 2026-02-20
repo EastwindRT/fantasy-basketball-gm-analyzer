@@ -1390,3 +1390,40 @@ export async function fetchStatCategories(leagueKey: string): Promise<Array<{ st
     return [];
   }
 }
+
+/**
+ * Fetch the current authenticated user's GUID from Yahoo
+ * Used to identify which team in a league belongs to the logged-in user
+ */
+export async function fetchCurrentUserGuid(): Promise<string | null> {
+  try {
+    const data = await apiRequest('/users;use_login=1');
+    // Yahoo returns: fantasy_content.users[0].user[0][] containing {guid: "..."}
+    const users = data?.fantasy_content?.users;
+    if (!users) return null;
+    const user = users[0]?.user ?? users?.user;
+    if (!user) return null;
+    const userArr = Array.isArray(user) ? user : [user];
+    for (const chunk of userArr) {
+      if (Array.isArray(chunk)) {
+        for (const item of chunk) {
+          if (item?.guid) return item.guid;
+        }
+      } else if (chunk?.guid) {
+        return chunk.guid;
+      }
+    }
+    return null;
+  } catch (err) {
+    console.warn('fetchCurrentUserGuid failed:', err);
+    return null;
+  }
+}
+
+/**
+ * Fetch the current week's scoreboard for a league (no week = current week).
+ * Thin wrapper around fetchScoreboard for clarity in the Current Season view.
+ */
+export async function fetchCurrentMatchup(leagueKey: string): Promise<MatchupData[]> {
+  return fetchScoreboard(leagueKey);
+}
