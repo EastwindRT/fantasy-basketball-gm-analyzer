@@ -39,6 +39,16 @@ function fmtStat(val: number | null | undefined, statId: string): string {
   return val.toFixed(1);
 }
 
+/** Get the coming Sunday ISO date (or today if today is Sunday) */
+function comingSundayISO(): string {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  const dayOfWeek = d.getDay(); // 0=Sun
+  const daysToSunday = dayOfWeek === 0 ? 0 : 7 - dayOfWeek;
+  d.setDate(d.getDate() + daysToSunday);
+  return d.toISOString().slice(0, 10);
+}
+
 function remainingDatesThisWeek(weekEnd: string): string[] {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -48,6 +58,15 @@ function remainingDatesThisWeek(weekEnd: string): string[] {
     dates.push(d.toISOString().slice(0, 10));
   }
   return dates;
+}
+
+/** Normalize Yahoo team abbreviations to NBA CDN tricodes */
+const YAHOO_TO_NBA: Record<string, string> = {
+  GS: 'GSW', NO: 'NOP', NY: 'NYK', SA: 'SAS', PHO: 'PHX', UTAH: 'UTA',
+};
+function normalizeAbbr(abbr: string): string {
+  const u = abbr.toUpperCase();
+  return YAHOO_TO_NBA[u] ?? u;
 }
 
 type CatResult = 'win' | 'tied' | 'loss' | 'neutral';
@@ -165,10 +184,12 @@ export default function CurrentSeason() {
   const myTeam = userMatchup?.teams.find(t => t.team_key === userTeam?.team_key);
   const oppTeam = userMatchup?.teams.find(t => t.team_key !== userTeam?.team_key);
 
-  // ── Load projections once we have both team keys and week end ──
+  // ── Load projections once we have both team keys ──
+  // weekEnd may be null if Yahoo didn't return it — fall back to coming Sunday
   useEffect(() => {
-    if (!myTeam || !oppTeam || !weekEnd) return;
+    if (!myTeam || !oppTeam) return;
     let cancelled = false;
+    const effectiveWeekEnd = weekEnd ?? comingSundayISO();
 
     async function loadProjections() {
       setLoadingProj(true);
@@ -198,13 +219,12 @@ export default function CurrentSeason() {
         setOppAvgs(oppMap);
 
         // NBA schedule for remaining days of the week
-        const remDates = remainingDatesThisWeek(weekEnd!);
-        if (remDates.length > 0) {
-          const res = await fetch(`/api/nba-schedule?from=${remDates[0]}&days=${remDates.length}`);
-          if (!cancelled && res.ok) {
-            const sched: NbaScheduleData = await res.json();
-            setScheduleData(sched);
-          }
+        const remDates = remainingDatesThisWeek(effectiveWeekEnd);
+        const fetchDays = Math.max(remDates.length, 1);
+        const res = await fetch(`/api/nba-schedule?from=${remDates[0] ?? new Date().toISOString().slice(0, 10)}&days=${fetchDays}`);
+        if (!cancelled && res.ok) {
+          const sched: NbaScheduleData = await res.json();
+          setScheduleData(sched);
         }
       } catch (err) {
         console.warn('Projection load failed:', err);
@@ -218,7 +238,11 @@ export default function CurrentSeason() {
   }, [myTeam?.team_key, oppTeam?.team_key, weekEnd]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Scoring categories only (no FGM, FGA, FTM, FTA etc.) ──
-  const scoringCats = allCats.filter(c => !c.is_only_display_stat);
+  // Fallback: if Yahoo didn't return is_only_display_stat, exclude known display-only stat IDs
+  const KNOWN_DISPLAY_ONLY = new Set(['0','1','2','3','4','6','7','9','20','21','22','23','24','25','26']);
+  const scoringCats = allCats.filter(c =>
+    !c.is_only_display_stat && !KNOWN_DISPLAY_ONLY.has(c.stat_id)
+  );
 
   // ── Remaining games per NBA team (from schedule) ──
   const remainingByTeam: Record<string, number> = {};
@@ -238,7 +262,7 @@ export default function CurrentSeason() {
     const projRem: Record<string, number> = {};
     for (const player of roster) {
       if (player.status === 'O' || player.status === 'IR') continue;
-      const rem = remainingByTeam[player.team_abbr] ?? 0;
+      const rem = remainingByTeam[normalizeAbbr(player.team_abbr)] ?? 0;
       if (rem === 0) continue;
       const avgs = avgsMap.get(player.player_key);
       if (!avgs) continue;

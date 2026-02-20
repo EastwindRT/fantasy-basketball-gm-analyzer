@@ -23,38 +23,48 @@ function formatDateLabel(iso: string) {
   const [, m, d] = iso.split('-').map(Number);
   const date = new Date(iso + 'T12:00:00');
   const day = DAY_LABELS[date.getDay()];
-  return { day, date: `${MONTH_SHORT[m - 1]} ${d}` };
+  const isWeekend = date.getDay() === 0 || date.getDay() === 6;
+  return { day, date: `${MONTH_SHORT[m - 1]} ${d}`, isWeekend };
 }
 
 function todayISO() {
-  const d = new Date();
-  return d.toISOString().slice(0, 10);
+  return new Date().toISOString().slice(0, 10);
 }
 
-function cellColor(count: number): string {
-  if (count === 0) return 'bg-gray-100 dark:bg-gray-800 text-gray-400 dark:text-gray-600';
-  if (count === 1) return 'bg-green-200 dark:bg-green-900 text-green-800 dark:text-green-200';
-  if (count === 2) return 'bg-green-400 dark:bg-green-700 text-green-900 dark:text-white';
-  return 'bg-green-600 dark:bg-green-500 text-white dark:text-gray-900';
+/**
+ * Compute number of days from fromISO through the Nth upcoming Sunday (inclusive).
+ * weeks=1 → to this coming Sunday
+ * weeks=2 → to the Sunday after that
+ * weeks=3 → one more Sunday
+ */
+function computeDays(fromISO: string, weeks: number): number {
+  const from = new Date(fromISO + 'T12:00:00');
+  const dayOfWeek = from.getDay(); // 0=Sun … 6=Sat
+  // Days remaining in this week including today (Sunday = 7 so it's a full week)
+  const daysThisWeek = dayOfWeek === 0 ? 7 : (7 - dayOfWeek + 1);
+  return daysThisWeek + (weeks - 1) * 7;
 }
 
-function totalColor(total: number, maxTotal: number): string {
-  if (total === 0) return 'text-gray-400 dark:text-gray-600';
+/** Red → amber → green scale based on games vs max */
+function totalColor(total: number, maxTotal: number): { bg: string; text: string } {
+  if (total === 0) return { bg: '', text: 'text-gray-600' };
   const pct = total / maxTotal;
-  if (pct >= 0.85) return 'text-green-600 dark:text-green-400 font-bold';
-  if (pct >= 0.6) return 'text-green-500 dark:text-green-500 font-semibold';
-  if (pct >= 0.35) return 'text-yellow-600 dark:text-yellow-400';
-  return 'text-red-500 dark:text-red-400';
+  if (pct >= 0.85) return { bg: 'bg-emerald-500/15', text: 'text-emerald-400 font-bold' };
+  if (pct >= 0.60) return { bg: 'bg-green-500/10',   text: 'text-green-400 font-semibold' };
+  if (pct >= 0.35) return { bg: 'bg-amber-500/10',   text: 'text-amber-400' };
+  return               { bg: 'bg-rose-500/10',    text: 'text-rose-400' };
 }
 
 export default function ScheduleGrid() {
   const [fromDate, setFromDate] = useState(todayISO());
-  const [days, setDays] = useState(7);
+  const [weeks, setWeeks] = useState(1);
   const [confFilter, setConfFilter] = useState<'All' | 'East' | 'West'>('All');
   const [data, setData] = useState<ScheduleData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [tooltip, setTooltip] = useState<{ x: number; y: number; text: string } | null>(null);
+
+  const days = computeDays(fromDate, weeks);
 
   const fetchSchedule = useCallback(async () => {
     setLoading(true);
@@ -65,8 +75,8 @@ export default function ScheduleGrid() {
       const json = await res.json();
       if (json.error) throw new Error(json.error);
       setData(json);
-    } catch (e: any) {
-      setError(e.message ?? 'Failed to load schedule');
+    } catch (e: unknown) {
+      setError((e as Error).message ?? 'Failed to load schedule');
     } finally {
       setLoading(false);
     }
@@ -76,15 +86,24 @@ export default function ScheduleGrid() {
     fetchSchedule();
   }, [fetchSchedule]);
 
-  const teams = data?.teams ?? [];
-  const dates = data?.dates ?? [];
+  const teams    = data?.teams ?? [];
+  const dates    = data?.dates ?? [];
   const filtered = confFilter === 'All' ? teams : teams.filter(t => t.conference === confFilter);
   const maxTotal = filtered.length > 0 ? Math.max(...filtered.map(t => t.total)) : 1;
+
+  // Compute end-date label for display
+  const endDateISO = (() => {
+    if (!fromDate) return '';
+    const d = new Date(fromDate + 'T12:00:00');
+    d.setDate(d.getDate() + days - 1);
+    const [, m, day] = d.toISOString().slice(0, 10).split('-').map(Number);
+    return `${MONTH_SHORT[m - 1]} ${day}`;
+  })();
 
   return (
     <div className="w-full space-y-4">
       {/* Controls */}
-      <div className="flex flex-wrap items-center gap-3 text-gray-300">
+      <div className="flex flex-wrap items-center gap-3">
         {/* From date */}
         <div className="flex items-center gap-2">
           <label className="text-sm font-medium text-gray-400 whitespace-nowrap">From</label>
@@ -96,22 +115,27 @@ export default function ScheduleGrid() {
           />
         </div>
 
-        {/* Days selector */}
+        {/* Week buttons — snap to Sunday boundaries */}
         <div className="flex items-center gap-1.5">
-          <span className="text-sm font-medium text-gray-400">Period</span>
-          {[7, 14, 21].map(d => (
+          <span className="text-sm font-medium text-gray-400">Through</span>
+          {([1, 2, 3] as const).map(w => (
             <button
-              key={d}
-              onClick={() => setDays(d)}
+              key={w}
+              onClick={() => setWeeks(w)}
               className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-                days === d
+                weeks === w
                   ? 'bg-orange-500 text-white'
                   : 'bg-white/5 text-gray-300 hover:bg-white/10'
               }`}
             >
-              {d}d
+              {w === 1 ? 'This Sun' : w === 2 ? 'Next Sun' : '2nd Sun'}
             </button>
           ))}
+          {fromDate && (
+            <span className="text-xs text-gray-600 ml-1">
+              ({days}d → {endDateISO})
+            </span>
+          )}
         </div>
 
         {/* Conference filter */}
@@ -133,25 +157,24 @@ export default function ScheduleGrid() {
         </div>
 
         {loading && (
-          <span className="text-sm text-gray-500 animate-pulse">Loading...</span>
+          <span className="text-sm text-gray-500 animate-pulse">Loading…</span>
         )}
       </div>
 
       {/* Legend */}
-      <div className="flex items-center gap-4 text-xs text-gray-400">
-        <span className="font-medium">Games:</span>
+      <div className="flex items-center gap-5 text-xs text-gray-400">
+        <span className="font-medium text-gray-500">Total games:</span>
         {[
-          { label: '0', cls: 'bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-600' },
-          { label: '1', cls: 'bg-green-200 dark:bg-green-900' },
-          { label: '2', cls: 'bg-green-400 dark:bg-green-700' },
-          { label: '3+', cls: 'bg-green-600 dark:bg-green-500' },
+          { label: 'Most',   cls: 'bg-emerald-500/20 text-emerald-400' },
+          { label: 'Good',   cls: 'bg-green-500/15 text-green-400' },
+          { label: 'Avg',    cls: 'bg-amber-500/15 text-amber-400' },
+          { label: 'Fewest', cls: 'bg-rose-500/15 text-rose-400' },
         ].map(({ label, cls }) => (
-          <span key={label} className="flex items-center gap-1">
-            <span className={`inline-block w-5 h-5 rounded ${cls}`} />
-            {label}
+          <span key={label} className="flex items-center gap-1.5">
+            <span className={`inline-block px-2 py-0.5 rounded text-[10px] font-bold ${cls}`}>{label}</span>
           </span>
         ))}
-        <span className="text-gray-500 ml-2">Hover a cell for opponent info</span>
+        <span className="text-gray-600 ml-1">· Cells show opponent · Hover for details</span>
       </div>
 
       {error && (
@@ -162,91 +185,107 @@ export default function ScheduleGrid() {
 
       {/* Grid */}
       {data && !loading && (
-        <div className="relative overflow-x-auto rounded-xl border border-white/10 bg-white/5 shadow-sm">
+        <div className="relative overflow-x-auto rounded-xl border border-white/10 bg-gray-950 shadow-sm">
           <table className="text-xs w-full border-collapse">
             <thead>
               <tr className="border-b border-white/10">
                 {/* Team header */}
-                <th className="sticky left-0 z-10 bg-gray-900 px-3 py-2 text-left text-xs font-semibold text-gray-400 border-r border-white/10 min-w-[120px]">
+                <th className="sticky left-0 z-10 bg-gray-950 px-3 py-2.5 text-left text-[11px] font-semibold text-gray-500 border-r border-white/10 min-w-[120px]">
                   Team
                 </th>
                 {dates.map(iso => {
-                  const { day, date } = formatDateLabel(iso);
+                  const { day, date, isWeekend } = formatDateLabel(iso);
                   return (
-                    <th key={iso} className="px-1 py-2 text-center font-medium text-gray-400 min-w-[44px]">
-                      <div className="text-[10px] text-gray-500">{day}</div>
-                      <div>{date}</div>
+                    <th
+                      key={iso}
+                      className={`px-1 py-2 text-center font-medium min-w-[44px] ${
+                        isWeekend ? 'text-gray-500' : 'text-gray-500'
+                      }`}
+                    >
+                      <div className={`text-[9px] uppercase tracking-wider ${isWeekend ? 'text-orange-400/70' : 'text-gray-600'}`}>
+                        {day}
+                      </div>
+                      <div className="text-[11px] text-gray-400">{date}</div>
                     </th>
                   );
                 })}
-                <th className="px-3 py-2 text-center font-semibold text-gray-300 min-w-[48px]">
+                <th className="px-3 py-2 text-center font-semibold text-gray-400 min-w-[52px]">
                   Total
                 </th>
               </tr>
             </thead>
             <tbody>
-              {filtered.map((team, idx) => (
-                <tr
-                  key={team.tricode}
-                  className={`border-b border-white/5 ${
-                    idx % 2 === 0 ? '' : 'bg-white/3'
-                  }`}
-                >
-                  {/* Team name cell */}
-                  <td className="sticky left-0 z-10 bg-gray-950 border-r border-white/10 px-3 py-1.5">
-                    <div className="flex items-center gap-2">
-                      <span
-                        className={`text-[9px] font-bold px-1 py-0.5 rounded ${
-                          team.conference === 'East'
-                            ? 'bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300'
-                            : 'bg-orange-100 dark:bg-orange-900 text-orange-700 dark:text-orange-300'
-                        }`}
-                      >
-                        {team.conference[0]}
-                      </span>
-                      <div>
-                        <div className="font-semibold text-white text-[11px]">{team.tricode}</div>
-                        <div className="text-[9px] text-gray-500 leading-none">{team.city}</div>
-                      </div>
-                    </div>
-                  </td>
-
-                  {/* Game cells */}
-                  {dates.map(iso => {
-                    const { count, opponents } = team.games[iso] ?? { count: 0, opponents: [] };
-                    const tooltipText = count === 0
-                      ? `${team.tricode} — OFF`
-                      : `${team.tricode} vs ${opponents.join(', ')} (${iso})`;
-                    return (
-                      <td
-                        key={iso}
-                        className={`text-center cursor-default select-none transition-opacity hover:opacity-80 ${cellColor(count)}`}
-                        onMouseEnter={e => {
-                          const rect = (e.target as HTMLElement).getBoundingClientRect();
-                          setTooltip({ x: rect.left + rect.width / 2, y: rect.top - 8, text: tooltipText });
-                        }}
-                        onMouseLeave={() => setTooltip(null)}
-                      >
-                        <span className="block py-1.5 font-medium">
-                          {count === 0 ? '—' : count}
+              {filtered.map((team, idx) => {
+                const { bg: totalBg, text: totalText } = totalColor(team.total, maxTotal);
+                return (
+                  <tr
+                    key={team.tricode}
+                    className={`border-b border-white/5 ${idx % 2 === 0 ? '' : 'bg-white/[0.02]'}`}
+                  >
+                    {/* Team name cell */}
+                    <td className="sticky left-0 z-10 bg-gray-950 border-r border-white/10 px-3 py-2">
+                      <div className="flex items-center gap-2">
+                        <span
+                          className={`text-[9px] font-bold px-1 py-0.5 rounded shrink-0 ${
+                            team.conference === 'East'
+                              ? 'bg-blue-900/60 text-blue-300'
+                              : 'bg-orange-900/60 text-orange-300'
+                          }`}
+                        >
+                          {team.conference[0]}
                         </span>
-                      </td>
-                    );
-                  })}
+                        <div>
+                          <div className="font-bold text-white text-[12px]">{team.tricode}</div>
+                          <div className="text-[9px] text-gray-600 leading-none">{team.city}</div>
+                        </div>
+                      </div>
+                    </td>
 
-                  {/* Total */}
-                  <td className={`text-center py-1.5 px-3 ${totalColor(team.total, maxTotal)}`}>
-                    {team.total}
-                  </td>
-                </tr>
-              ))}
+                    {/* Game cells — binary: show opponent or rest */}
+                    {dates.map(iso => {
+                      const { count, opponents } = team.games[iso] ?? { count: 0, opponents: [] };
+                      const hasGame = count > 0;
+                      const opp = opponents[0] ?? '';
+                      const tooltipText = hasGame
+                        ? `${team.tricode} vs ${opponents.join(', ')}  •  ${iso}`
+                        : `${team.tricode} — Rest`;
+                      return (
+                        <td
+                          key={iso}
+                          className={`text-center cursor-default select-none transition-colors ${
+                            hasGame
+                              ? 'bg-white/[0.06] hover:bg-white/10'
+                              : 'hover:bg-white/[0.02]'
+                          }`}
+                          onMouseEnter={e => {
+                            const rect = (e.target as HTMLElement).getBoundingClientRect();
+                            setTooltip({ x: rect.left + rect.width / 2, y: rect.top - 8, text: tooltipText });
+                          }}
+                          onMouseLeave={() => setTooltip(null)}
+                        >
+                          <span className={`block py-2 text-[11px] font-semibold tabular-nums ${
+                            hasGame ? 'text-gray-200' : 'text-gray-700'
+                          }`}>
+                            {hasGame ? opp : '—'}
+                          </span>
+                        </td>
+                      );
+                    })}
+
+                    {/* Total — colored by schedule strength */}
+                    <td className={`text-center py-2 px-3 font-bold text-[13px] tabular-nums ${totalBg} ${totalText}`}>
+                      {team.total}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
 
           {/* Tooltip */}
           {tooltip && (
             <div
-              className="fixed z-50 pointer-events-none bg-gray-900 dark:bg-gray-700 text-white text-xs px-2.5 py-1.5 rounded-lg shadow-lg -translate-x-1/2 -translate-y-full whitespace-nowrap"
+              className="fixed z-50 pointer-events-none bg-gray-800 text-white text-xs px-2.5 py-1.5 rounded-lg shadow-xl -translate-x-1/2 -translate-y-full whitespace-nowrap border border-white/10"
               style={{ left: tooltip.x, top: tooltip.y }}
             >
               {tooltip.text}
@@ -255,24 +294,25 @@ export default function ScheduleGrid() {
         </div>
       )}
 
-      {/* Summary stats */}
+      {/* Summary */}
       {data && !loading && filtered.length > 0 && (
-        <div className="flex flex-wrap gap-4 text-sm text-gray-400">
+        <div className="flex flex-wrap gap-5 text-sm text-gray-500">
           <span>
-            <span className="font-semibold text-white">{filtered.length}</span> teams shown
+            <span className="font-semibold text-white">{filtered.length}</span> teams
           </span>
           <span>
-            <span className="font-semibold text-green-600 dark:text-green-400">
-              {filtered[0]?.tricode}
-            </span>{' '}
-            leads with{' '}
-            <span className="font-semibold text-green-600 dark:text-green-400">{filtered[0]?.total}</span> games
+            <span className="font-bold text-emerald-400">{filtered[0]?.tricode}</span>
+            {' '}leads with{' '}
+            <span className="font-bold text-emerald-400">{filtered[0]?.total}</span> games
           </span>
           <span>
-            Avg games:{' '}
+            Avg:{' '}
             <span className="font-semibold text-white">
               {(filtered.reduce((s, t) => s + t.total, 0) / filtered.length).toFixed(1)}
             </span>
+          </span>
+          <span className="text-gray-600">
+            {dates[0]} → {dates[dates.length - 1]}
           </span>
         </div>
       )}
