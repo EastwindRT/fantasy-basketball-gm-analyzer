@@ -264,6 +264,8 @@ export interface DraftResult {
 
 export interface MatchupData {
   week: number;
+  week_start?: string; // YYYY-MM-DD
+  week_end?: string;   // YYYY-MM-DD
   teams: Array<{
     team_key: string;
     team_name: string;
@@ -272,6 +274,15 @@ export interface MatchupData {
     win?: boolean;
   }>;
 }
+
+export interface RosterPlayer {
+  player_key: string;
+  name: string;
+  team_abbr: string;  // NBA team tricode (e.g. "LAL")
+  status?: string;    // "O" = Out, "IR" = IR, "D" = DTD, undefined = healthy
+  eligible_positions: string[];
+}
+
 
 /**
  * Get stored auth state from localStorage
@@ -1116,6 +1127,8 @@ export async function fetchScoreboard(leagueKey: string, week?: number): Promise
 
       const matchup = m.matchup;
       const weekNum = parseInt(matchup[0]?.week || week || '0', 10);
+      const weekStart: string | undefined = matchup[0]?.week_start;
+      const weekEnd: string | undefined = matchup[0]?.week_end;
       const teams: MatchupData['teams'] = [];
 
       // Parse teams in matchup
@@ -1202,7 +1215,7 @@ export async function fetchScoreboard(leagueKey: string, week?: number): Promise
           teams[1].win = true;
         }
 
-        matchups.push({ week: weekNum, teams });
+        matchups.push({ week: weekNum, week_start: weekStart, week_end: weekEnd, teams });
       }
     });
 
@@ -1340,7 +1353,15 @@ export function getStatDisplayName(statId: string, statCategories?: { [season: s
   return NBA_STAT_ID_NAMES[statId] || `Stat ${statId}`;
 }
 
-export async function fetchStatCategories(leagueKey: string): Promise<Array<{ stat_id: string; name: string; display_name: string }>> {
+export interface StatCategory {
+  stat_id: string;
+  name: string;
+  display_name: string;
+  is_only_display_stat: boolean; // true = FGM/FGA/FTM/FTA etc. (not a scoring category)
+  sort_order: string;            // '1' = higher is better, '0' = lower is better (e.g. TO)
+}
+
+export async function fetchStatCategories(leagueKey: string): Promise<StatCategory[]> {
   try {
     const data = await apiRequest(`/leagues;league_keys=${leagueKey}/settings`);
 
@@ -1369,7 +1390,7 @@ export async function fetchStatCategories(leagueKey: string): Promise<Array<{ st
       return [];
     }
 
-    const result: Array<{ stat_id: string; name: string; display_name: string }> = [];
+    const result: StatCategory[] = [];
 
     const stats = Array.isArray(statCategories.stats) ? statCategories.stats : Object.values(statCategories.stats);
 
@@ -1380,10 +1401,12 @@ export async function fetchStatCategories(leagueKey: string): Promise<Array<{ st
         stat_id: statId,
         name: s.stat.name || NBA_STAT_ID_NAMES[statId] || '',
         display_name: s.stat.display_name || NBA_STAT_ID_NAMES[statId] || '',
+        is_only_display_stat: s.stat.is_only_display_stat === '1' || s.stat.is_only_display_stat === true,
+        sort_order: String(s.stat.sort_order ?? '1'),
       });
     });
 
-    console.log(`fetchStatCategories: found ${result.length} categories:`, result.map(r => `${r.stat_id}=${r.display_name}`).join(', '));
+    console.log(`fetchStatCategories: found ${result.length} categories (${result.filter(r => !r.is_only_display_stat).length} scoring):`, result.map(r => `${r.stat_id}=${r.display_name}(display=${r.is_only_display_stat})`).join(', '));
     return result;
   } catch (error) {
     console.warn('Failed to fetch stat categories:', error);
@@ -1426,4 +1449,125 @@ export async function fetchCurrentUserGuid(): Promise<string | null> {
  */
 export async function fetchCurrentMatchup(leagueKey: string): Promise<MatchupData[]> {
   return fetchScoreboard(leagueKey);
+}
+
+/**
+ * Fetch the active roster for a team.
+ * Returns players with their NBA team abbreviation and injury status.
+ */
+export async function fetchTeamRoster(teamKey: string): Promise<RosterPlayer[]> {
+  try {
+    const data = await apiRequest(`/teams;team_keys=${teamKey}/roster`);
+    const teamsData = data?.fantasy_content?.teams;
+    if (!teamsData) return [];
+
+    // Yahoo wraps teams in numeric-keyed object
+    const teamEntry = teamsData['0']?.team ?? teamsData[0]?.team;
+    if (!teamEntry) return [];
+
+    // Roster is usually at team[1].roster
+    const rosterSection = Array.isArray(teamEntry)
+      ? teamEntry.find((chunk: any) => chunk?.roster)?.roster
+      : teamEntry?.roster;
+    if (!rosterSection) return [];
+
+    const playersData = rosterSection['0']?.players ?? rosterSection[0]?.players ?? rosterSection.players;
+    if (!playersData) return [];
+
+    const result: RosterPlayer[] = [];
+
+    // Players are in numeric keys: "0", "1", ... (skip "count" key)
+    const entries = typeof playersData === 'object' ? Object.entries(playersData) : [];
+    for (const [k, v] of entries) {
+      if (k === 'count') continue;
+      const playerArr: any = (v as any)?.player;
+      if (!playerArr) continue;
+
+      // player[0] = array of info chunks
+      const infoChunks: any[] = Array.isArray(playerArr[0]) ? playerArr[0] : [];
+      let player_key = '';
+      let name = '';
+      let team_abbr = '';
+      let status: string | undefined;
+      const eligible_positions: string[] = [];
+
+      for (const chunk of infoChunks) {
+        if (chunk?.player_key) player_key = chunk.player_key;
+        if (chunk?.name?.full) name = chunk.name.full;
+        if (chunk?.editorial_team_abbr) team_abbr = chunk.editorial_team_abbr.toUpperCase();
+        if (chunk?.status != null) status = chunk.status || undefined;
+        if (chunk?.eligible_positions) {
+          const ep = chunk.eligible_positions;
+          const positions = Array.isArray(ep) ? ep : Object.values(ep);
+          positions.forEach((p: any) => {
+            if (p?.position) eligible_positions.push(p.position);
+          });
+        }
+      }
+
+      if (player_key) {
+        result.push({ player_key, name, team_abbr, status, eligible_positions });
+      }
+    }
+
+    console.log(`fetchTeamRoster(${teamKey}): ${result.length} players`);
+    return result;
+  } catch (err) {
+    console.warn(`fetchTeamRoster(${teamKey}) failed:`, err);
+    return [];
+  }
+}
+
+/**
+ * Fetch per-game season averages for a list of players.
+ * Returns a Map: player_key -> { stat_id -> avg_per_game }
+ */
+export async function fetchPlayerAverages(playerKeys: string[]): Promise<Map<string, { [stat_id: string]: number }>> {
+  const result = new Map<string, { [stat_id: string]: number }>();
+  if (playerKeys.length === 0) return result;
+
+  // Yahoo allows up to 25 players per request
+  const BATCH = 25;
+  for (let i = 0; i < playerKeys.length; i += BATCH) {
+    const batch = playerKeys.slice(i, i + BATCH);
+    try {
+      const keysStr = batch.join(',');
+      const data = await apiRequest(`/players;player_keys=${keysStr}/stats;type=averages`);
+      const playersData = data?.fantasy_content?.players;
+      if (!playersData) continue;
+
+      const entries = typeof playersData === 'object' ? Object.entries(playersData) : [];
+      for (const [k, v] of entries) {
+        if (k === 'count') continue;
+        const playerArr: any = (v as any)?.player;
+        if (!playerArr) continue;
+
+        // player[0] = info chunks, player[1] = stats chunk
+        const infoChunks: any[] = Array.isArray(playerArr[0]) ? playerArr[0] : [];
+        let player_key = '';
+        for (const chunk of infoChunks) {
+          if (chunk?.player_key) { player_key = chunk.player_key; break; }
+        }
+        if (!player_key) continue;
+
+        const statsChunk = playerArr[1];
+        const statsArr = statsChunk?.player_stats?.stats ?? statsChunk?.player_stats?.stats;
+        if (!statsArr) continue;
+
+        const avgs: { [stat_id: string]: number } = {};
+        const statsEntries = Array.isArray(statsArr) ? statsArr : Object.values(statsArr);
+        statsEntries.forEach((s: any) => {
+          if (s?.stat?.stat_id != null) {
+            avgs[String(s.stat.stat_id)] = parseFloat(s.stat.value ?? '0') || 0;
+          }
+        });
+        result.set(player_key, avgs);
+      }
+    } catch (err) {
+      console.warn(`fetchPlayerAverages batch failed:`, err);
+    }
+  }
+
+  console.log(`fetchPlayerAverages: got averages for ${result.size}/${playerKeys.length} players`);
+  return result;
 }

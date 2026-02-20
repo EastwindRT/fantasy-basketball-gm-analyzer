@@ -8,72 +8,128 @@ import {
   fetchCurrentUserGuid,
   fetchStatCategories,
   fetchLeague,
+  fetchTeamRoster,
+  fetchPlayerAverages,
   getAuthState,
   isTokenExpired,
   initiateAuth,
 } from '@/lib/yahoo-api';
-import type { TeamData, MatchupData } from '@/lib/yahoo-api';
+import type { TeamData, MatchupData, RosterPlayer, StatCategory } from '@/lib/yahoo-api';
 
-// Stat IDs that are "lower is better" (like turnovers)
-const LOWER_IS_BETTER = new Set(['19', '21', '22', '23', '24', '25']);
+// Percentage stat dependencies: stat_id -> { made_id, att_id }
+// Used to project FG%, FT%, 3PT% from underlying makes/attempts averages
+const PCT_DEPS: { [id: string]: { made: string; att: string } } = {
+  '5':  { made: '4',  att: '3'  },  // FG%  = FGM / FGA
+  '8':  { made: '7',  att: '6'  },  // FT%  = FTM / FTA
+  '11': { made: '10', att: '9'  },  // 3PT% = 3PTM / 3PTA
+};
 
-interface LeagueOption {
-  league_key: string;
-  name: string;
-  season: string;
+interface NbaScheduleData {
+  teams: Array<{ tricode: string; games: Record<string, { count: number }> }>;
+  dates: string[];
 }
 
-interface StatCategory {
-  stat_id: string;
-  display_name: string;
+function fmtStat(val: number | null | undefined, statId: string): string {
+  if (val == null) return '—';
+  if (PCT_DEPS[statId]) {
+    const s = val.toFixed(3);
+    return s.startsWith('0.') ? s.slice(1) : s; // .456 not 0.456
+  }
+  if (val % 1 === 0) return String(Math.round(val));
+  return val.toFixed(1);
+}
+
+function remainingDatesThisWeek(weekEnd: string): string[] {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const end = new Date(weekEnd + 'T12:00:00');
+  const dates: string[] = [];
+  for (let d = new Date(today); d <= end; d.setDate(d.getDate() + 1)) {
+    dates.push(d.toISOString().slice(0, 10));
+  }
+  return dates;
+}
+
+type CatResult = 'win' | 'tied' | 'loss' | 'neutral';
+
+function catResult(cat: StatCategory, my: number | null | undefined, opp: number | null | undefined): CatResult {
+  if (my == null || opp == null) return 'neutral';
+  const lowerBetter = cat.sort_order === '0';
+  if (my === opp) return 'tied';
+  return (lowerBetter ? my < opp : my > opp) ? 'win' : 'loss';
+}
+
+function recordFrom(cats: StatCategory[], myStats: Record<string, number>, oppStats: Record<string, number>) {
+  return cats.reduce(
+    (acc, cat) => {
+      const r = catResult(cat, myStats[cat.stat_id] ?? null, oppStats[cat.stat_id] ?? null);
+      if (r === 'win') acc.won++;
+      else if (r === 'tied') acc.tied++;
+      else if (r === 'loss') acc.lost++;
+      return acc;
+    },
+    { won: 0, tied: 0, lost: 0 },
+  );
 }
 
 export default function CurrentSeason() {
   const [isAuth, setIsAuth] = useState(false);
-  const [leagues, setLeagues] = useState<LeagueOption[]>([]);
-  const [selectedKey, setSelectedKey] = useState<string>('');
+  const [leagues, setLeagues] = useState<Array<{ league_key: string; name: string; season: string }>>([]);
+  const [selectedKey, setSelectedKey] = useState('');
   const [loadingLeagues, setLoadingLeagues] = useState(false);
   const [loadingData, setLoadingData] = useState(false);
+  const [loadingProj, setLoadingProj] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Data
+  // League data
   const [leagueName, setLeagueName] = useState('');
   const [currentWeek, setCurrentWeek] = useState<number | null>(null);
+  const [weekStart, setWeekStart] = useState<string | null>(null);
+  const [weekEnd, setWeekEnd] = useState<string | null>(null);
   const [standings, setStandings] = useState<TeamData[]>([]);
   const [matchups, setMatchups] = useState<MatchupData[]>([]);
-  const [statCategories, setStatCategories] = useState<StatCategory[]>([]);
+  const [allCats, setAllCats] = useState<StatCategory[]>([]);
   const [userGuid, setUserGuid] = useState<string | null>(null);
 
-  // Check auth on mount
+  // Projections
+  const [myRoster, setMyRoster] = useState<RosterPlayer[]>([]);
+  const [oppRoster, setOppRoster] = useState<RosterPlayer[]>([]);
+  const [myAvgs, setMyAvgs] = useState<Map<string, Record<string, number>>>(new Map());
+  const [oppAvgs, setOppAvgs] = useState<Map<string, Record<string, number>>>(new Map());
+  const [scheduleData, setScheduleData] = useState<NbaScheduleData | null>(null);
+
+  // ── Auth check ──
   useEffect(() => {
     const auth = getAuthState();
     setIsAuth(!!auth.accessToken && !isTokenExpired());
   }, []);
 
-  // Fetch leagues once authenticated
+  // ── Load leagues on auth ──
   useEffect(() => {
     if (!isAuth) return;
     setLoadingLeagues(true);
-    setError(null);
-
     Promise.all([fetchUserLeagues('nba'), fetchCurrentUserGuid()])
       .then(([ls, guid]) => {
-        // Filter to current season (2025)
         const current = ls.filter(l => l.season === '2025' || l.season === '2026');
-        setLeagues(current.length > 0 ? current : ls.slice(0, 5));
-        if (current.length > 0) setSelectedKey(current[0].league_key);
-        else if (ls.length > 0) setSelectedKey(ls[0].league_key);
+        const shown = current.length > 0 ? current : ls.slice(0, 5);
+        setLeagues(shown);
+        if (shown.length > 0) setSelectedKey(shown[0].league_key);
         setUserGuid(guid);
       })
       .catch(err => setError(`Failed to load leagues: ${err.message}`))
       .finally(() => setLoadingLeagues(false));
   }, [isAuth]);
 
-  // Fetch league data when a league is selected
+  // ── Load league data ──
   const loadLeagueData = useCallback(async (leagueKey: string) => {
     if (!leagueKey) return;
     setLoadingData(true);
     setError(null);
+    setMyRoster([]);
+    setOppRoster([]);
+    setMyAvgs(new Map());
+    setOppAvgs(new Map());
+    setScheduleData(null);
     try {
       const [leagueInfo, teamStandings, weekMatchups, cats] = await Promise.all([
         fetchLeague(leagueKey),
@@ -85,9 +141,13 @@ export default function CurrentSeason() {
       setCurrentWeek(leagueInfo.current_week ?? null);
       setStandings(teamStandings.sort((a, b) => a.standings.rank - b.standings.rank));
       setMatchups(weekMatchups);
-      setStatCategories(cats);
-    } catch (err: any) {
-      setError(`Failed to load data: ${err.message}`);
+      setAllCats(cats);
+      if (weekMatchups[0]) {
+        setWeekStart(weekMatchups[0].week_start ?? null);
+        setWeekEnd(weekMatchups[0].week_end ?? null);
+      }
+    } catch (err: unknown) {
+      setError(`Failed to load data: ${(err as Error).message}`);
     } finally {
       setLoadingData(false);
     }
@@ -97,42 +157,135 @@ export default function CurrentSeason() {
     if (selectedKey) loadLeagueData(selectedKey);
   }, [selectedKey, loadLeagueData]);
 
-  // Identify user's team from standings by GUID match
-  const userTeam = userGuid
-    ? standings.find(t => t.manager.guid === userGuid)
-    : null;
-
-  // Find user's current matchup
+  // ── Derived: identify user's team + matchup ──
+  const userTeam = userGuid ? standings.find(t => t.manager.guid === userGuid) : null;
   const userMatchup = userTeam
     ? matchups.find(m => m.teams.some(t => t.team_key === userTeam.team_key))
     : null;
+  const myTeam = userMatchup?.teams.find(t => t.team_key === userTeam?.team_key);
+  const oppTeam = userMatchup?.teams.find(t => t.team_key !== userTeam?.team_key);
 
-  const myTeamInMatchup = userMatchup?.teams.find(t => t.team_key === userTeam?.team_key);
-  const oppTeamInMatchup = userMatchup?.teams.find(t => t.team_key !== userTeam?.team_key);
+  // ── Load projections once we have both team keys and week end ──
+  useEffect(() => {
+    if (!myTeam || !oppTeam || !weekEnd) return;
+    let cancelled = false;
 
-  // Compute category wins/losses
-  function compareStats() {
-    if (!myTeamInMatchup?.stats || !oppTeamInMatchup?.stats) return { won: 0, tied: 0, lost: 0 };
-    let won = 0, tied = 0, lost = 0;
-    for (const cat of statCategories) {
-      const myVal = myTeamInMatchup.stats[cat.stat_id] ?? 0;
-      const oppVal = oppTeamInMatchup.stats[cat.stat_id] ?? 0;
-      const lowerBetter = LOWER_IS_BETTER.has(cat.stat_id);
-      if (myVal === oppVal) tied++;
-      else if (lowerBetter ? myVal < oppVal : myVal > oppVal) won++;
-      else lost++;
+    async function loadProjections() {
+      setLoadingProj(true);
+      try {
+        // Rosters
+        const [mRoster, oRoster] = await Promise.all([
+          fetchTeamRoster(myTeam!.team_key),
+          fetchTeamRoster(oppTeam!.team_key),
+        ]);
+        if (cancelled) return;
+        setMyRoster(mRoster);
+        setOppRoster(oRoster);
+
+        // Player averages (batch both rosters)
+        const allKeys = [
+          ...mRoster.map(p => p.player_key),
+          ...oRoster.map(p => p.player_key),
+        ];
+        const avgsMap = await fetchPlayerAverages(allKeys);
+        if (cancelled) return;
+
+        const myMap = new Map<string, Record<string, number>>();
+        const oppMap = new Map<string, Record<string, number>>();
+        mRoster.forEach(p => { const a = avgsMap.get(p.player_key); if (a) myMap.set(p.player_key, a); });
+        oRoster.forEach(p => { const a = avgsMap.get(p.player_key); if (a) oppMap.set(p.player_key, a); });
+        setMyAvgs(myMap);
+        setOppAvgs(oppMap);
+
+        // NBA schedule for remaining days of the week
+        const remDates = remainingDatesThisWeek(weekEnd!);
+        if (remDates.length > 0) {
+          const res = await fetch(`/api/nba-schedule?from=${remDates[0]}&days=${remDates.length}`);
+          if (!cancelled && res.ok) {
+            const sched: NbaScheduleData = await res.json();
+            setScheduleData(sched);
+          }
+        }
+      } catch (err) {
+        console.warn('Projection load failed:', err);
+      } finally {
+        if (!cancelled) setLoadingProj(false);
+      }
     }
-    return { won, tied, lost };
+
+    loadProjections();
+    return () => { cancelled = true; };
+  }, [myTeam?.team_key, oppTeam?.team_key, weekEnd]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Scoring categories only (no FGM, FGA, FTM, FTA etc.) ──
+  const scoringCats = allCats.filter(c => !c.is_only_display_stat);
+
+  // ── Remaining games per NBA team (from schedule) ──
+  const remainingByTeam: Record<string, number> = {};
+  if (scheduleData) {
+    for (const t of scheduleData.teams) {
+      remainingByTeam[t.tricode] = Object.values(t.games).reduce((s, g) => s + g.count, 0);
+    }
   }
 
-  const catRecord = compareStats();
+  // ── Projection calculator ──
+  function computeProjected(
+    roster: RosterPlayer[],
+    avgsMap: Map<string, Record<string, number>>,
+    currentStats: Record<string, number> | undefined,
+  ): Record<string, number> {
+    // Accumulate projected remaining stats for all healthy players
+    const projRem: Record<string, number> = {};
+    for (const player of roster) {
+      if (player.status === 'O' || player.status === 'IR') continue;
+      const rem = remainingByTeam[player.team_abbr] ?? 0;
+      if (rem === 0) continue;
+      const avgs = avgsMap.get(player.player_key);
+      if (!avgs) continue;
+      for (const [sid, avg] of Object.entries(avgs)) {
+        projRem[sid] = (projRem[sid] ?? 0) + avg * rem;
+      }
+    }
 
+    // Compute projected total per category (scoring + display-only for pct math)
+    const proj: Record<string, number> = {};
+    for (const cat of allCats) {
+      const cur = currentStats?.[cat.stat_id] ?? 0;
+      const dep = PCT_DEPS[cat.stat_id];
+      if (dep) {
+        const currMade = currentStats?.[dep.made] ?? 0;
+        const currAtt  = currentStats?.[dep.att]  ?? 0;
+        const projMade = currMade + (projRem[dep.made] ?? 0);
+        const projAtt  = currAtt  + (projRem[dep.att]  ?? 0);
+        proj[cat.stat_id] = projAtt > 0 ? projMade / projAtt : cur;
+      } else {
+        proj[cat.stat_id] = cur + (projRem[cat.stat_id] ?? 0);
+      }
+    }
+    return proj;
+  }
+
+  const hasProjections = scheduleData !== null && (myAvgs.size > 0 || oppAvgs.size > 0);
+  const myProjected  = hasProjections && myTeam  ? computeProjected(myRoster,  myAvgs,  myTeam.stats)  : null;
+  const oppProjected = hasProjections && oppTeam ? computeProjected(oppRoster, oppAvgs, oppTeam.stats) : null;
+
+  // ── Category records ──
+  const curRecord = (myTeam?.stats && oppTeam?.stats)
+    ? recordFrom(scoringCats, myTeam.stats, oppTeam.stats)
+    : { won: 0, tied: 0, lost: 0 };
+
+  const projRecord = (myProjected && oppProjected)
+    ? recordFrom(scoringCats, myProjected, oppProjected)
+    : null;
+
+  const injuredMy  = myRoster.filter(p => p.status === 'O' || p.status === 'IR');
+  const injuredOpp = oppRoster.filter(p => p.status === 'O' || p.status === 'IR');
+
+  // ── Not authenticated ──
   if (!isAuth) {
     return (
       <div className="flex flex-col items-center justify-center py-32 gap-6">
-        <div className="w-16 h-16 rounded-2xl bg-orange-500/20 flex items-center justify-center">
-          <span className="text-3xl">🏀</span>
-        </div>
+        <div className="w-16 h-16 rounded-2xl bg-orange-500/20 flex items-center justify-center text-3xl">🏀</div>
         <div className="text-center">
           <h2 className="text-2xl font-bold text-white mb-2">Sign in to view your league</h2>
           <p className="text-gray-400 text-sm max-w-xs">
@@ -150,8 +303,9 @@ export default function CurrentSeason() {
   }
 
   return (
-    <div className="space-y-6">
-      {/* League selector */}
+    <div className="space-y-5 max-w-6xl mx-auto">
+
+      {/* ── League Selector ── */}
       <div className="flex flex-wrap items-center gap-3">
         <label className="text-sm font-medium text-gray-400">League</label>
         {loadingLeagues ? (
@@ -171,14 +325,10 @@ export default function CurrentSeason() {
             ))}
           </select>
         )}
-        {leagueName && (
-          <span className="text-sm text-gray-400">
-            {leagueName}
-            {currentWeek != null && ` — Week ${currentWeek}`}
+        {(loadingData || loadingProj) && (
+          <span className="text-sm text-gray-500 animate-pulse">
+            {loadingData ? 'Fetching data…' : 'Loading projections…'}
           </span>
-        )}
-        {loadingData && (
-          <span className="text-sm text-gray-500 animate-pulse">Fetching data…</span>
         )}
       </div>
 
@@ -189,174 +339,253 @@ export default function CurrentSeason() {
       )}
 
       {!loadingData && standings.length > 0 && (
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-          {/* ── Current Matchup ── */}
-          <div className="bg-white/5 border border-white/10 rounded-2xl overflow-hidden">
-            <div className="px-6 py-5 border-b border-white/10">
-              <h3 className="text-[17px] font-semibold text-white">
-                Current Matchup {currentWeek != null ? `— Week ${currentWeek}` : ''}
-              </h3>
-              {userMatchup && catRecord && (
-                <p className="text-[13px] text-gray-400 mt-0.5">
-                  Your record:{' '}
-                  <span className="text-green-600 dark:text-green-400 font-semibold">{catRecord.won}W</span>
-                  {' / '}
-                  <span className="text-gray-500 font-semibold">{catRecord.tied}T</span>
-                  {' / '}
-                  <span className="text-red-500 dark:text-red-400 font-semibold">{catRecord.lost}L</span>
+        <div className="grid grid-cols-1 xl:grid-cols-5 gap-5">
+
+          {/* ══════════════════════════════════════════════
+              Current Matchup  (3 of 5 cols on xl)
+          ══════════════════════════════════════════════ */}
+          <div className="xl:col-span-3 bg-gray-900/60 border border-white/10 rounded-2xl overflow-hidden">
+
+            {/* Header */}
+            <div className="px-5 pt-5 pb-4 border-b border-white/10">
+              <div className="text-[10px] uppercase tracking-widest text-gray-600 font-semibold mb-3">
+                Week {currentWeek ?? '—'}
+                {weekStart && weekEnd && (
+                  <span className="ml-2 normal-case tracking-normal font-normal text-gray-700">
+                    {weekStart} → {weekEnd}
+                  </span>
+                )}
+              </div>
+
+              {userMatchup ? (
+                <div className="grid grid-cols-3 items-start gap-2">
+                  {/* My team */}
+                  <div className="text-right">
+                    <div className="font-bold text-white text-sm leading-tight truncate">
+                      {myTeam?.team_name ?? '—'}
+                    </div>
+                    <div className="text-[11px] mt-1 text-gray-500">
+                      <span className="text-emerald-400 font-bold">{curRecord.won}</span>
+                      <span className="mx-0.5 text-gray-700">·</span>
+                      <span>{curRecord.tied}</span>
+                      <span className="mx-0.5 text-gray-700">·</span>
+                      <span className="text-rose-400 font-bold">{curRecord.lost}</span>
+                      <span className="text-gray-700 ml-1 text-[9px]">now</span>
+                    </div>
+                    {projRecord && (
+                      <div className="text-[11px] mt-0.5 text-gray-600">
+                        <span className={projRecord.won > projRecord.lost ? 'text-emerald-500' : projRecord.won < projRecord.lost ? 'text-rose-500' : 'text-gray-500'}>
+                          {projRecord.won}
+                        </span>
+                        <span className="mx-0.5">·</span>
+                        <span>{projRecord.tied}</span>
+                        <span className="mx-0.5">·</span>
+                        <span className={projRecord.won < projRecord.lost ? 'text-emerald-500' : projRecord.won > projRecord.lost ? 'text-rose-500' : 'text-gray-500'}>
+                          {projRecord.lost}
+                        </span>
+                        <span className="text-gray-700 ml-1 text-[9px]">proj</span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* VS */}
+                  <div className="text-center pt-0.5">
+                    <span className="text-gray-700 font-bold text-xs">vs</span>
+                  </div>
+
+                  {/* Opponent */}
+                  <div className="text-left">
+                    <div className="font-bold text-white text-sm leading-tight truncate">
+                      {oppTeam?.team_name ?? '—'}
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-sm text-gray-500">
+                  {userTeam ? 'No matchup found for this week.' : 'Could not identify your team.'}
                 </p>
+              )}
+
+              {/* Projected outcome pill */}
+              {projRecord && (
+                <div className={`mt-3 text-[12px] font-semibold text-center py-1.5 rounded-lg ${
+                  projRecord.won > projRecord.lost
+                    ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                    : projRecord.won < projRecord.lost
+                    ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
+                    : 'bg-white/5 text-gray-400 border border-white/10'
+                }`}>
+                  {projRecord.won > projRecord.lost
+                    ? `Projected win  ${projRecord.won}–${projRecord.tied}–${projRecord.lost}`
+                    : projRecord.won < projRecord.lost
+                    ? `Projected loss  ${projRecord.won}–${projRecord.tied}–${projRecord.lost}`
+                    : `Projected tie  ${projRecord.won}–${projRecord.tied}–${projRecord.lost}`}
+                </div>
               )}
             </div>
 
-            {!userMatchup ? (
-              <div className="px-6 py-8 text-center text-gray-400 dark:text-gray-500 text-sm">
-                {userTeam
-                  ? 'No matchup found for current week.'
-                  : 'Could not identify your team. Showing all matchups below.'}
-              </div>
-            ) : (
-              <div className="px-4 py-4">
-                {/* Header row */}
-                <div className="grid grid-cols-3 mb-3 text-[11px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                  <div className="text-right pr-3 truncate">{myTeamInMatchup?.team_name ?? 'Your Team'}</div>
+            {/* Category rows */}
+            {userMatchup && scoringCats.length > 0 && (
+              <>
+                {/* Column labels */}
+                <div className="grid grid-cols-[1fr_80px_1fr] px-5 py-2 text-[9px] uppercase tracking-widest text-gray-700 font-semibold border-b border-white/5">
+                  <div className="text-right pr-4">Yours</div>
                   <div className="text-center">Category</div>
-                  <div className="text-left pl-3 truncate">{oppTeamInMatchup?.team_name ?? 'Opponent'}</div>
+                  <div className="text-left pl-4">Theirs</div>
                 </div>
 
-                {statCategories.length > 0 ? (
-                  <div className="space-y-1">
-                    {statCategories.map(cat => {
-                      const myVal = myTeamInMatchup?.stats?.[cat.stat_id] ?? null;
-                      const oppVal = oppTeamInMatchup?.stats?.[cat.stat_id] ?? null;
-                      if (myVal === null && oppVal === null) return null;
+                <div>
+                  {scoringCats.map(cat => {
+                    const myVal  = myTeam?.stats?.[cat.stat_id]  ?? null;
+                    const oppVal = oppTeam?.stats?.[cat.stat_id] ?? null;
+                    const myProj  = myProjected?.[cat.stat_id]  ?? null;
+                    const oppProj = oppProjected?.[cat.stat_id] ?? null;
+                    if (myVal === null && oppVal === null) return null;
 
-                      const lowerBetter = LOWER_IS_BETTER.has(cat.stat_id);
-                      const myWins = myVal !== null && oppVal !== null && (lowerBetter ? myVal < oppVal : myVal > oppVal);
-                      const oppWins = myVal !== null && oppVal !== null && (lowerBetter ? oppVal < myVal : oppVal > myVal);
-                      const tied = myVal !== null && oppVal !== null && myVal === oppVal;
+                    const result     = catResult(cat, myVal, oppVal);
+                    const projResult = (myProj != null && oppProj != null)
+                      ? catResult(cat, myProj, oppProj)
+                      : null;
 
-                      return (
-                        <div
-                          key={cat.stat_id}
-                          className="grid grid-cols-3 items-center py-1.5 px-2 rounded-lg hover:bg-gray-50 dark:hover:bg-white/5 transition-colors"
-                        >
-                          <div className={`text-right pr-3 text-sm font-semibold ${myWins ? 'text-green-600 dark:text-green-400' : tied ? 'text-gray-600 dark:text-gray-400' : 'text-red-500 dark:text-red-400'}`}>
-                            {myVal !== null ? myVal : '—'}
+                    const myColor  = result === 'win'  ? 'text-emerald-400' : result === 'tied' ? 'text-gray-400' : 'text-rose-400';
+                    const oppColor = result === 'loss' ? 'text-emerald-400' : result === 'tied' ? 'text-gray-400' : 'text-rose-400';
+                    const projMyColor  = projResult === 'win'  ? 'text-emerald-500/60' : projResult === 'tied' ? 'text-gray-600' : 'text-rose-500/60';
+                    const projOppColor = projResult === 'loss' ? 'text-emerald-500/60' : projResult === 'tied' ? 'text-gray-600' : 'text-rose-500/60';
+
+                    return (
+                      <div
+                        key={cat.stat_id}
+                        className={`grid grid-cols-[1fr_80px_1fr] items-center px-5 py-2.5 border-b border-white/5 transition-colors hover:bg-white/3 ${
+                          result === 'win' ? 'bg-emerald-500/5' : result === 'loss' ? 'bg-rose-500/5' : ''
+                        }`}
+                      >
+                        {/* My value */}
+                        <div className="text-right pr-4">
+                          <div className={`text-[15px] font-bold tabular-nums ${myColor}`}>
+                            {fmtStat(myVal, cat.stat_id)}
                           </div>
-                          <div className="text-center text-[11px] text-gray-500 dark:text-gray-400 font-medium">
-                            {cat.display_name}
-                          </div>
-                          <div className={`text-left pl-3 text-sm font-semibold ${oppWins ? 'text-green-600 dark:text-green-400' : tied ? 'text-gray-600 dark:text-gray-400' : 'text-red-500 dark:text-red-400'}`}>
-                            {oppVal !== null ? oppVal : '—'}
+                          {myProj !== null && (
+                            <div className={`text-[10px] tabular-nums leading-none mt-0.5 ${projMyColor}`}>
+                              → {fmtStat(myProj, cat.stat_id)}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Category name */}
+                        <div className="text-center">
+                          <span className="text-[11px] font-semibold text-gray-500">{cat.display_name}</span>
+                          <div className="text-[8px] mt-0.5">
+                            {result === 'win'  && <span className="text-emerald-500">●</span>}
+                            {result === 'loss' && <span className="text-rose-500">●</span>}
+                            {result === 'tied' && <span className="text-gray-700">—</span>}
                           </div>
                         </div>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  /* Fallback: show total points */
-                  <div className="grid grid-cols-3 items-center py-4 text-center">
-                    <div className={`text-3xl font-bold ${(myTeamInMatchup?.points ?? 0) > (oppTeamInMatchup?.points ?? 0) ? 'text-green-600 dark:text-green-400' : 'text-gray-700 dark:text-gray-300'}`}>
-                      {myTeamInMatchup?.points ?? '—'}
-                    </div>
-                    <div className="text-sm font-medium text-gray-500 dark:text-gray-400">pts</div>
-                    <div className={`text-3xl font-bold ${(oppTeamInMatchup?.points ?? 0) > (myTeamInMatchup?.points ?? 0) ? 'text-green-600 dark:text-green-400' : 'text-gray-700 dark:text-gray-300'}`}>
-                      {oppTeamInMatchup?.points ?? '—'}
-                    </div>
+
+                        {/* Opp value */}
+                        <div className="text-left pl-4">
+                          <div className={`text-[15px] font-bold tabular-nums ${oppColor}`}>
+                            {fmtStat(oppVal, cat.stat_id)}
+                          </div>
+                          {oppProj !== null && (
+                            <div className={`text-[10px] tabular-nums leading-none mt-0.5 ${projOppColor}`}>
+                              → {fmtStat(oppProj, cat.stat_id)}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Footer: injury info + projection note */}
+                {(hasProjections || injuredMy.length > 0 || injuredOpp.length > 0) && (
+                  <div className="px-5 py-3 flex flex-wrap gap-x-5 gap-y-1 text-[11px] text-gray-600">
+                    {hasProjections && <span>→ projected final (excludes injured)</span>}
+                    {injuredMy.length > 0 && (
+                      <span className="text-rose-500/60">
+                        Your OUT: {injuredMy.map(p => p.name.split(' ').slice(-1)[0]).join(', ')}
+                      </span>
+                    )}
+                    {injuredOpp.length > 0 && (
+                      <span>
+                        Opp OUT: {injuredOpp.map(p => p.name.split(' ').slice(-1)[0]).join(', ')}
+                      </span>
+                    )}
+                    {loadingProj && <span className="animate-pulse">Computing projections…</span>}
                   </div>
                 )}
-              </div>
+              </>
             )}
           </div>
 
-          {/* ── League Standings ── */}
-          <div className="bg-white/5 border border-white/10 rounded-2xl overflow-hidden">
-            <div className="px-6 py-5 border-b border-white/10">
-              <h3 className="text-[17px] font-semibold text-white">League Standings</h3>
-              <p className="text-[13px] text-gray-400 mt-0.5">{standings.length} teams</p>
+          {/* ══════════════════════════════════════════════
+              Standings  (2 of 5 cols on xl)
+          ══════════════════════════════════════════════ */}
+          <div className="xl:col-span-2 bg-gray-900/60 border border-white/10 rounded-2xl overflow-hidden">
+            <div className="px-5 py-4 border-b border-white/10">
+              <div className="text-[10px] uppercase tracking-widest text-gray-600 font-semibold">Standings</div>
+              <div className="text-white font-bold text-sm mt-0.5 truncate">{leagueName}</div>
             </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-gray-100 dark:border-white/10 text-[11px] text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                    <th className="px-4 py-2 text-left font-medium text-gray-400">Rank</th>
-                    <th className="px-4 py-2 text-left font-medium text-gray-400">Team</th>
-                    <th className="px-4 py-2 text-center font-medium text-gray-400">W</th>
-                    <th className="px-4 py-2 text-center font-medium text-gray-400">L</th>
-                    <th className="px-4 py-2 text-center font-medium text-gray-400">T</th>
-                    <th className="px-4 py-2 text-center font-medium text-gray-400">Win%</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {standings.map((team, idx) => {
-                    const isMe = team.team_key === userTeam?.team_key;
-                    const total = team.standings.wins + team.standings.losses + team.standings.ties;
-                    const winPct = total > 0 ? (team.standings.wins / total) : 0;
-                    return (
-                      <tr
-                        key={team.team_key}
-                        className={`border-b border-white/5 ${
-                          isMe
-                            ? 'bg-orange-500/10'
-                            : idx % 2 === 0 ? '' : 'bg-white/3'
-                        }`}
-                      >
-                        <td className="px-4 py-2.5 text-gray-400 font-medium">
-                          {team.standings.rank}
-                        </td>
-                        <td className="px-4 py-2.5">
-                          <div className="flex items-center gap-2">
-                            {isMe && (
-                              <span className="text-[10px] font-bold px-1.5 py-0.5 bg-blue-600 text-white rounded">YOU</span>
-                            )}
-                            <div>
-                              <div className={`font-semibold ${isMe ? 'text-orange-300' : 'text-white'}`}>
-                                {team.name}
-                              </div>
-                              <div className="text-[11px] text-gray-400 dark:text-gray-500">{team.manager.nickname}</div>
-                            </div>
-                          </div>
-                        </td>
-                        <td className="px-4 py-2.5 text-center font-semibold text-green-600 dark:text-green-400">
-                          {team.standings.wins}
-                        </td>
-                        <td className="px-4 py-2.5 text-center font-semibold text-red-500 dark:text-red-400">
-                          {team.standings.losses}
-                        </td>
-                        <td className="px-4 py-2.5 text-center text-gray-500 dark:text-gray-400">
-                          {team.standings.ties}
-                        </td>
-                        <td className="px-4 py-2.5 text-center font-medium text-gray-300">
-                          {(winPct * 100).toFixed(1)}%
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+            <table className="w-full text-[13px]">
+              <thead>
+                <tr className="border-b border-white/5 text-[9px] uppercase tracking-widest text-gray-700">
+                  <th className="px-4 py-2 text-left font-semibold">#</th>
+                  <th className="px-2 py-2 text-left font-semibold">Team</th>
+                  <th className="px-2 py-2 text-center font-semibold">W</th>
+                  <th className="px-2 py-2 text-center font-semibold">L</th>
+                  <th className="px-2 py-2 text-center font-semibold">Win%</th>
+                </tr>
+              </thead>
+              <tbody>
+                {standings.map(team => {
+                  const isMe  = team.team_key === userTeam?.team_key;
+                  const isOpp = team.team_key === oppTeam?.team_key;
+                  const total = team.standings.wins + team.standings.losses + team.standings.ties;
+                  const winPct = total > 0 ? team.standings.wins / total : 0;
+                  return (
+                    <tr
+                      key={team.team_key}
+                      className={`border-b border-white/5 ${
+                        isMe  ? 'bg-orange-500/10' :
+                        isOpp ? 'bg-blue-500/5'    : ''
+                      }`}
+                    >
+                      <td className="px-4 py-2.5 text-gray-600 font-semibold w-8">{team.standings.rank}</td>
+                      <td className="px-2 py-2.5">
+                        <div className="flex items-center gap-1.5">
+                          {isMe  && <span className="text-[9px] font-bold px-1 py-0.5 bg-orange-500 text-white rounded shrink-0">YOU</span>}
+                          {isOpp && <span className="text-[9px] font-bold px-1 py-0.5 bg-blue-600  text-white rounded shrink-0">OPP</span>}
+                          <span className={`font-semibold truncate max-w-[100px] ${isMe ? 'text-orange-300' : 'text-white'}`}>
+                            {team.name}
+                          </span>
+                        </div>
+                      </td>
+                      <td className="px-2 py-2.5 text-center text-emerald-400 font-semibold">{team.standings.wins}</td>
+                      <td className="px-2 py-2.5 text-center text-rose-400 font-semibold">{team.standings.losses}</td>
+                      <td className="px-2 py-2.5 text-center text-gray-400">{(winPct * 100).toFixed(0)}%</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         </div>
       )}
 
-      {/* All matchups (when user team not identified, or as extra context) */}
+      {/* Fallback: all matchups when user team not identified */}
       {!loadingData && matchups.length > 0 && !userTeam && (
-        <div className="bg-white/5 border border-white/10 rounded-2xl overflow-hidden">
-          <div className="px-6 py-5 border-b border-white/10">
-            <h3 className="text-[17px] font-semibold text-white">
+        <div className="bg-gray-900/60 border border-white/10 rounded-2xl overflow-hidden">
+          <div className="px-5 py-4 border-b border-white/10">
+            <div className="text-[10px] uppercase tracking-widest text-gray-600 font-semibold">
               All Matchups — Week {currentWeek}
-            </h3>
+            </div>
           </div>
-          <div className="divide-y divide-gray-100 dark:divide-white/10">
+          <div className="divide-y divide-white/5">
             {matchups.map((m, i) => (
-              <div key={i} className="px-6 py-4 flex items-center justify-between gap-4">
-                <span className="font-semibold text-gray-900 dark:text-white flex-1 text-right">
-                  {m.teams[0]?.team_name}
-                </span>
-                <span className="text-gray-500 dark:text-gray-400 text-sm px-3">vs</span>
-                <span className="font-semibold text-gray-900 dark:text-white flex-1">
-                  {m.teams[1]?.team_name}
-                </span>
+              <div key={i} className="px-5 py-3 flex items-center gap-4">
+                <span className="font-semibold text-white flex-1 text-right text-sm">{m.teams[0]?.team_name}</span>
+                <span className="text-gray-700 text-xs">vs</span>
+                <span className="font-semibold text-white flex-1 text-sm">{m.teams[1]?.team_name}</span>
               </div>
             ))}
           </div>
