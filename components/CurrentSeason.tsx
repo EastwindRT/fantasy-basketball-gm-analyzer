@@ -396,20 +396,6 @@ export default function CurrentSeason() {
                       <span className="text-rose-400 font-bold">{curRecord.lost}</span>
                       <span className="text-gray-700 ml-1 text-[9px]">now</span>
                     </div>
-                    {projRecord && (
-                      <div className="text-[11px] mt-0.5 text-gray-600">
-                        <span className={projRecord.won > projRecord.lost ? 'text-emerald-500' : projRecord.won < projRecord.lost ? 'text-rose-500' : 'text-gray-500'}>
-                          {projRecord.won}
-                        </span>
-                        <span className="mx-0.5">·</span>
-                        <span>{projRecord.tied}</span>
-                        <span className="mx-0.5">·</span>
-                        <span className={projRecord.won < projRecord.lost ? 'text-emerald-500' : projRecord.won > projRecord.lost ? 'text-rose-500' : 'text-gray-500'}>
-                          {projRecord.lost}
-                        </span>
-                        <span className="text-gray-700 ml-1 text-[9px]">proj</span>
-                      </div>
-                    )}
                   </div>
 
                   {/* VS */}
@@ -430,22 +416,6 @@ export default function CurrentSeason() {
                 </p>
               )}
 
-              {/* Projected outcome pill */}
-              {projRecord && (
-                <div className={`mt-3 text-[12px] font-semibold text-center py-1.5 rounded-lg ${
-                  projRecord.won > projRecord.lost
-                    ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
-                    : projRecord.won < projRecord.lost
-                    ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
-                    : 'bg-white/5 text-gray-400 border border-white/10'
-                }`}>
-                  {projRecord.won > projRecord.lost
-                    ? `Projected win  ${projRecord.won}–${projRecord.tied}–${projRecord.lost}`
-                    : projRecord.won < projRecord.lost
-                    ? `Projected loss  ${projRecord.won}–${projRecord.tied}–${projRecord.lost}`
-                    : `Projected tie  ${projRecord.won}–${projRecord.tied}–${projRecord.lost}`}
-                </div>
-              )}
             </div>
 
             {/* Category rows */}
@@ -473,8 +443,6 @@ export default function CurrentSeason() {
 
                     const myColor  = result === 'win'  ? 'text-emerald-400' : result === 'tied' ? 'text-gray-400' : 'text-rose-400';
                     const oppColor = result === 'loss' ? 'text-emerald-400' : result === 'tied' ? 'text-gray-400' : 'text-rose-400';
-                    const projMyColor  = projResult === 'win'  ? 'text-emerald-500/60' : projResult === 'tied' ? 'text-gray-600' : 'text-rose-500/60';
-                    const projOppColor = projResult === 'loss' ? 'text-emerald-500/60' : projResult === 'tied' ? 'text-gray-600' : 'text-rose-500/60';
 
                     return (
                       <div
@@ -488,11 +456,6 @@ export default function CurrentSeason() {
                           <div className={`text-[15px] font-bold tabular-nums ${myColor}`}>
                             {fmtStat(myVal, cat.stat_id)}
                           </div>
-                          {myProj !== null && (
-                            <div className={`text-[10px] tabular-nums leading-none mt-0.5 ${projMyColor}`}>
-                              → {fmtStat(myProj, cat.stat_id)}
-                            </div>
-                          )}
                         </div>
 
                         {/* Category name */}
@@ -510,34 +473,135 @@ export default function CurrentSeason() {
                           <div className={`text-[15px] font-bold tabular-nums ${oppColor}`}>
                             {fmtStat(oppVal, cat.stat_id)}
                           </div>
-                          {oppProj !== null && (
-                            <div className={`text-[10px] tabular-nums leading-none mt-0.5 ${projOppColor}`}>
-                              → {fmtStat(oppProj, cat.stat_id)}
-                            </div>
-                          )}
                         </div>
                       </div>
                     );
                   })}
                 </div>
 
-                {/* Footer: injury info + projection note */}
-                {(hasProjections || injuredMy.length > 0 || injuredOpp.length > 0) && (
-                  <div className="px-5 py-3 flex flex-wrap gap-x-5 gap-y-1 text-[11px] text-gray-600">
-                    {hasProjections && <span>→ projected final (excludes injured)</span>}
-                    {injuredMy.length > 0 && (
-                      <span className="text-rose-500/60">
-                        Your OUT: {injuredMy.map(p => p.name.split(' ').slice(-1)[0]).join(', ')}
+                {/* ── Projected Final section ── */}
+                <div className="border-t border-white/10 mt-1">
+                  {/* Section header */}
+                  <div className="px-5 py-3 flex items-center justify-between">
+                    <div>
+                      <span className="text-[10px] uppercase tracking-widest font-semibold text-gray-500">
+                        Projected Final
                       </span>
+                      {(weekEnd || weekStart) && (
+                        <span className="ml-2 text-[10px] text-gray-700">
+                          through {weekEnd ?? comingSundayISO()}
+                        </span>
+                      )}
+                    </div>
+                    {loadingProj && (
+                      <span className="text-[11px] text-gray-600 animate-pulse">Computing…</span>
                     )}
-                    {injuredOpp.length > 0 && (
-                      <span>
-                        Opp OUT: {injuredOpp.map(p => p.name.split(' ').slice(-1)[0]).join(', ')}
-                      </span>
-                    )}
-                    {loadingProj && <span className="animate-pulse">Computing projections…</span>}
                   </div>
-                )}
+
+                  {/* Outcome pill */}
+                  {projRecord && (
+                    <div className={`mx-5 mb-3 text-[12px] font-semibold text-center py-2 rounded-lg ${
+                      projRecord.won > projRecord.lost
+                        ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                        : projRecord.won < projRecord.lost
+                        ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
+                        : 'bg-white/5 text-gray-400 border border-white/10'
+                    }`}>
+                      {projRecord.won > projRecord.lost
+                        ? `Projected WIN  ·  ${projRecord.won}–${projRecord.tied}–${projRecord.lost}`
+                        : projRecord.won < projRecord.lost
+                        ? `Projected LOSS  ·  ${projRecord.won}–${projRecord.tied}–${projRecord.lost}`
+                        : `Projected TIE  ·  ${projRecord.won}–${projRecord.tied}–${projRecord.lost}`}
+                    </div>
+                  )}
+
+                  {/* Projected category breakdown */}
+                  {myProjected && oppProjected ? (
+                    <>
+                      {/* Column labels */}
+                      <div className="grid grid-cols-[1fr_80px_1fr] px-5 pb-1 text-[9px] uppercase tracking-widest text-gray-700 font-semibold">
+                        <div className="text-right pr-4">Yours</div>
+                        <div className="text-center">Category</div>
+                        <div className="text-left pl-4">Theirs</div>
+                      </div>
+
+                      {scoringCats.map(cat => {
+                        const myProj  = myProjected[cat.stat_id]  ?? null;
+                        const oppProj = oppProjected[cat.stat_id] ?? null;
+                        const myVal   = myTeam?.stats?.[cat.stat_id]  ?? 0;
+                        const oppVal  = oppTeam?.stats?.[cat.stat_id] ?? 0;
+                        if (myProj === null && oppProj === null) return null;
+
+                        const projResult = catResult(cat, myProj, oppProj);
+                        const myColor  = projResult === 'win'  ? 'text-emerald-400' : projResult === 'tied' ? 'text-gray-400' : 'text-rose-400';
+                        const oppColor = projResult === 'loss' ? 'text-emerald-400' : projResult === 'tied' ? 'text-gray-400' : 'text-rose-400';
+
+                        // Delta from current (how much more we expect to gain)
+                        const isPct = PCT_DEPS[cat.stat_id] != null;
+                        const myDelta  = isPct ? null : (myProj  ?? 0) - myVal;
+                        const oppDelta = isPct ? null : (oppProj ?? 0) - oppVal;
+
+                        return (
+                          <div
+                            key={cat.stat_id}
+                            className={`grid grid-cols-[1fr_80px_1fr] items-center px-5 py-2 border-b border-white/5 ${
+                              projResult === 'win' ? 'bg-emerald-500/5' : projResult === 'loss' ? 'bg-rose-500/5' : ''
+                            }`}
+                          >
+                            {/* My projected value */}
+                            <div className="text-right pr-4">
+                              <div className={`text-[15px] font-bold tabular-nums ${myColor}`}>
+                                {fmtStat(myProj, cat.stat_id)}
+                              </div>
+                              {myDelta !== null && myDelta > 0 && (
+                                <div className="text-[10px] text-gray-600 tabular-nums">+{fmtStat(myDelta, cat.stat_id)}</div>
+                              )}
+                            </div>
+
+                            {/* Category */}
+                            <div className="text-center">
+                              <span className="text-[11px] font-semibold text-gray-500">{cat.display_name}</span>
+                              <div className="text-[8px] mt-0.5">
+                                {projResult === 'win'  && <span className="text-emerald-500">●</span>}
+                                {projResult === 'loss' && <span className="text-rose-500">●</span>}
+                                {projResult === 'tied' && <span className="text-gray-700">—</span>}
+                              </div>
+                            </div>
+
+                            {/* Opp projected value */}
+                            <div className="text-left pl-4">
+                              <div className={`text-[15px] font-bold tabular-nums ${oppColor}`}>
+                                {fmtStat(oppProj, cat.stat_id)}
+                              </div>
+                              {oppDelta !== null && oppDelta > 0 && (
+                                <div className="text-[10px] text-gray-600 tabular-nums">+{fmtStat(oppDelta, cat.stat_id)}</div>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </>
+                  ) : !loadingProj && (
+                    <div className="px-5 pb-4 text-[12px] text-gray-600">
+                      Projections unavailable — roster data could not be loaded.
+                    </div>
+                  )}
+
+                  {/* Injury note */}
+                  {(injuredMy.length > 0 || injuredOpp.length > 0) && (
+                    <div className="px-5 py-2.5 flex flex-wrap gap-x-5 gap-y-1 text-[11px] text-gray-600 border-t border-white/5">
+                      <span>Projections exclude injured players</span>
+                      {injuredMy.length > 0 && (
+                        <span className="text-rose-500/60">
+                          Your OUT: {injuredMy.map(p => p.name.split(' ').slice(-1)[0]).join(', ')}
+                        </span>
+                      )}
+                      {injuredOpp.length > 0 && (
+                        <span>Opp OUT: {injuredOpp.map(p => p.name.split(' ').slice(-1)[0]).join(', ')}</span>
+                      )}
+                    </div>
+                  )}
+                </div>
               </>
             )}
           </div>
