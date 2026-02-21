@@ -218,10 +218,13 @@ export default function CurrentSeason() {
         setMyAvgs(myMap);
         setOppAvgs(oppMap);
 
-        // NBA schedule for remaining days of the week
-        const remDates = remainingDatesThisWeek(effectiveWeekEnd);
-        const fetchDays = Math.max(remDates.length, 1);
-        const res = await fetch(`/api/nba-schedule?from=${remDates[0] ?? new Date().toISOString().slice(0, 10)}&days=${fetchDays}`);
+        // Fetch full week schedule (weekStart → weekEnd) so we can split into
+        // games already played vs games remaining for each team
+        const fullFrom = weekStart ?? effectiveWeekEnd;
+        const fullDays = Math.max(1, Math.floor(
+          (new Date(effectiveWeekEnd + 'T12:00:00').getTime() - new Date(fullFrom + 'T12:00:00').getTime()) / 86400000
+        ) + 1);
+        const res = await fetch(`/api/nba-schedule?from=${fullFrom}&days=${fullDays}`);
         if (!cancelled && res.ok) {
           const sched: NbaScheduleData = await res.json();
           setScheduleData(sched);
@@ -244,18 +247,25 @@ export default function CurrentSeason() {
     !c.is_only_display_stat && !KNOWN_DISPLAY_ONLY.has(c.stat_id)
   );
 
-  // ── Remaining games per NBA team (from schedule) ──
-  const remainingByTeam: Record<string, number> = {};
-  if (scheduleData) {
-    for (const t of scheduleData.teams) {
-      remainingByTeam[t.tricode] = Object.values(t.games).reduce((s, g) => s + g.count, 0);
-    }
-  }
-
-  // Rate-based day counts (always available, no roster needed)
+  // Date constants used by schedule split and rate-based fallback
   const TODAY_ISO     = new Date().toISOString().slice(0, 10);
   const projWeekEnd   = weekEnd   ?? comingSundayISO();
   const projWeekStart = weekStart ?? TODAY_ISO;
+
+  // ── Split schedule into played vs remaining per NBA team ──
+  const remainingByTeam: Record<string, number> = {};
+  const playedByTeam:   Record<string, number> = {};
+  if (scheduleData) {
+    for (const t of scheduleData.teams) {
+      let played = 0, remaining = 0;
+      for (const [date, g] of Object.entries(t.games)) {
+        if (date < TODAY_ISO) played += g.count;
+        else remaining += g.count;
+      }
+      remainingByTeam[t.tricode] = remaining;
+      playedByTeam[t.tricode]   = played;
+    }
+  }
   const daysPlayed    = Math.max(1, Math.floor(
     (new Date(TODAY_ISO + 'T12:00:00').getTime() - new Date(projWeekStart + 'T12:00:00').getTime()) / 86400000
   ) + 1);
@@ -297,23 +307,38 @@ export default function CurrentSeason() {
     return proj;
   };
 
-  // ── Rate-based projection (fallback: pace current stats forward) ──
-  const computeRateProjection = (currentStats: Record<string, number> | undefined): Record<string, number> => {
+  // ── Rate-based projection (fallback: pace current stats forward by games, not days) ──
+  const computeRateProjection = (
+    roster: RosterPlayer[],
+    currentStats: Record<string, number> | undefined,
+  ): Record<string, number> => {
     const proj: Record<string, number> = {};
+
+    // Use actual game counts from schedule if available, else fall back to calendar days
+    const active = roster.filter(p => p.status !== 'O' && p.status !== 'IR');
+    let avgPlayed    = daysPlayed;
+    let avgRemaining = daysRemaining;
+    if (active.length > 0 && scheduleData) {
+      const totalPlayed    = active.reduce((s, p) => s + (playedByTeam[normalizeAbbr(p.team_abbr)]   ?? 0), 0);
+      const totalRemaining = active.reduce((s, p) => s + (remainingByTeam[normalizeAbbr(p.team_abbr)] ?? 0), 0);
+      avgPlayed    = Math.max(1, totalPlayed    / active.length);
+      avgRemaining = totalRemaining / active.length;
+    }
+
     for (const cat of allCats) {
       const cur = currentStats?.[cat.stat_id] ?? 0;
       if (PCT_DEPS[cat.stat_id]) {
-        proj[cat.stat_id] = cur;
+        proj[cat.stat_id] = cur; // % stats: keep as-is, can't extrapolate without makes/attempts
       } else {
-        proj[cat.stat_id] = cur + (cur / daysPlayed) * daysRemaining;
+        proj[cat.stat_id] = cur + (cur / avgPlayed) * avgRemaining;
       }
     }
     return proj;
   };
 
   const hasRosterProj = scheduleData !== null && (myAvgs.size > 0 || oppAvgs.size > 0);
-  const myProjected  = myTeam  ? (hasRosterProj ? computeProjected(myRoster,  myAvgs,  myTeam.stats)  : computeRateProjection(myTeam.stats))  : null;
-  const oppProjected = oppTeam ? (hasRosterProj ? computeProjected(oppRoster, oppAvgs, oppTeam.stats) : computeRateProjection(oppTeam.stats)) : null;
+  const myProjected  = myTeam  ? (hasRosterProj ? computeProjected(myRoster,  myAvgs,  myTeam.stats)  : computeRateProjection(myRoster,  myTeam.stats))  : null;
+  const oppProjected = oppTeam ? (hasRosterProj ? computeProjected(oppRoster, oppAvgs, oppTeam.stats) : computeRateProjection(oppRoster, oppTeam.stats)) : null;
   const projLabel    = hasRosterProj ? 'roster-based' : loadingProj ? 'computing…' : 'rate estimate';
 
   // ── Category records ──
