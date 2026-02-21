@@ -325,14 +325,23 @@ export default function CurrentSeason() {
       avgRemaining = totalRemaining / active.length;
     }
 
+    // Step 1: project all counting stats forward (including FGM, FGA, FTM, FTA, 3PTM, 3PTA)
     for (const cat of allCats) {
+      if (PCT_DEPS[cat.stat_id]) continue; // handle % stats in step 2
       const cur = currentStats?.[cat.stat_id] ?? 0;
-      if (PCT_DEPS[cat.stat_id]) {
-        proj[cat.stat_id] = cur; // % stats: keep as-is, can't extrapolate without makes/attempts
-      } else {
-        proj[cat.stat_id] = cur + (cur / avgPlayed) * avgRemaining;
-      }
+      proj[cat.stat_id] = cur + (cur / avgPlayed) * avgRemaining;
     }
+
+    // Step 2: derive % stats from projected makes ÷ projected attempts
+    // e.g. FG% = projFGM / projFGA  (not just scaling the current %)
+    for (const cat of allCats) {
+      const dep = PCT_DEPS[cat.stat_id];
+      if (!dep) continue;
+      const projMade = proj[dep.made] ?? (currentStats?.[dep.made] ?? 0);
+      const projAtt  = proj[dep.att]  ?? (currentStats?.[dep.att]  ?? 0);
+      proj[cat.stat_id] = projAtt > 0 ? projMade / projAtt : (currentStats?.[cat.stat_id] ?? 0);
+    }
+
     return proj;
   };
 
