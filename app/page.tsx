@@ -53,6 +53,15 @@ export default function Home() {
   const [isClearingCache, setIsClearingCache] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>(null);
   const [liveTab, setLiveTab] = useState<LiveTab>('season');
+  const [liveIsAuthed, setLiveIsAuthed] = useState(false);
+
+  // Track auth state for navbar login/switch button
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const token = localStorage.getItem('yahoo_access_token');
+    const exp = localStorage.getItem('yahoo_expires_at');
+    setLiveIsAuthed(!!(token && exp && Date.now() < Number(exp) - 60000));
+  }, [viewMode]);
 
   // Auto-clear cache on version change
   useEffect(() => {
@@ -230,63 +239,52 @@ export default function Home() {
   // ─── Landing Page ───────────────────────────────────────────────────────────
   if (viewMode === null) {
     return (
-      <main className="min-h-screen bg-gray-950 flex flex-col items-center justify-center px-4">
-        {/* Logo / Title */}
-        <div className="text-center mb-16">
-          <div className="text-5xl mb-4">🏆</div>
-          <h1 className="text-4xl font-bold text-white tracking-tight mb-3">
-            Fantasy Basketball
-          </h1>
-          <p className="text-gray-400 text-lg">
-            Your league, your stats, your edge.
-          </p>
+      <main className="min-h-screen bg-gray-950 flex flex-col">
+        {/* Brand */}
+        <div className="flex flex-col items-center pt-16 pb-10 px-6">
+          <div className="w-16 h-16 rounded-2xl bg-orange-500/15 border border-orange-500/20 flex items-center justify-center text-3xl mb-5">
+            🏆
+          </div>
+          <h1 className="text-2xl font-bold text-white tracking-tight">TheDraftDay</h1>
+          <p className="text-gray-500 text-sm mt-2">Fantasy basketball intelligence</p>
         </div>
 
-        {/* Two cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 w-full max-w-2xl">
-          {/* Live League */}
+        {/* Nav list */}
+        <div className="px-4 space-y-3 w-full max-w-sm mx-auto">
           <button
             onClick={() => setViewMode('live')}
-            className="group relative flex flex-col items-start p-8 rounded-2xl bg-white/5 border border-white/10 hover:bg-white/10 hover:border-white/20 transition-all duration-200 text-left cursor-pointer"
+            className="w-full flex items-center gap-4 p-5 rounded-2xl bg-orange-500/10 border border-orange-500/20 active:scale-[0.98] transition-all duration-150 text-left"
           >
-            <div className="w-12 h-12 rounded-xl bg-orange-500/20 flex items-center justify-center mb-5 group-hover:bg-orange-500/30 transition-colors">
-              <span className="text-2xl">🏀</span>
+            <span className="w-11 h-11 rounded-xl bg-orange-500/20 flex items-center justify-center text-2xl shrink-0">🏀</span>
+            <div className="flex-1 min-w-0">
+              <div className="font-bold text-white">Live League</div>
+              <div className="text-gray-400 text-sm mt-0.5">Matchup · standings · schedule</div>
             </div>
-            <h2 className="text-xl font-semibold text-white mb-2">Live League</h2>
-            <p className="text-gray-400 text-sm leading-relaxed">
-              Current matchup, standings, and NBA schedule heatmap for this week.
-            </p>
-            <div className="mt-6 flex items-center gap-1.5 text-orange-400 text-sm font-medium group-hover:gap-2.5 transition-all">
-              Open <span>→</span>
-            </div>
+            <span className="text-orange-400 text-xl font-light shrink-0">›</span>
           </button>
 
-          {/* Historical GM Standings */}
           <button
             onClick={() => setViewMode('historical')}
-            className="group relative flex flex-col items-start p-8 rounded-2xl bg-white/5 border border-white/10 hover:bg-white/10 hover:border-white/20 transition-all duration-200 text-left cursor-pointer"
+            className="w-full flex items-center gap-4 p-5 rounded-2xl bg-white/5 border border-white/10 active:scale-[0.98] transition-all duration-150 text-left"
           >
-            <div className="w-12 h-12 rounded-xl bg-blue-500/20 flex items-center justify-center mb-5 group-hover:bg-blue-500/30 transition-colors">
-              <span className="text-2xl">📊</span>
+            <span className="w-11 h-11 rounded-xl bg-blue-500/20 flex items-center justify-center text-2xl shrink-0">📊</span>
+            <div className="flex-1 min-w-0">
+              <div className="font-bold text-white">GM Analytics</div>
+              <div className="text-gray-400 text-sm mt-0.5">Multi-season · H2H · GOAT rankings</div>
             </div>
-            <h2 className="text-xl font-semibold text-white mb-2">Historical GM Standings</h2>
-            <p className="text-gray-400 text-sm leading-relaxed">
-              Multi-season performance analytics, head-to-head records, and GOAT rankings.
-            </p>
-            <div className="mt-6 flex items-center gap-1.5 text-blue-400 text-sm font-medium group-hover:gap-2.5 transition-all">
-              Open <span>→</span>
-            </div>
+            <span className="text-gray-600 text-xl font-light shrink-0">›</span>
           </button>
         </div>
+
+        <div className="h-12" />
       </main>
     );
   }
 
-  // ─── Shared nav bar (shown in live / historical) ─────────────────────────────
+  // ─── Historical nav bar ──────────────────────────────────────────────────────
   const NavBar = () => (
     <div className="sticky top-0 z-20 bg-gray-950/90 backdrop-blur-xl border-b border-white/10">
       <div className="max-w-7xl mx-auto px-4 h-14 flex items-center justify-between gap-4">
-        {/* Back to home */}
         <button
           onClick={() => { setViewMode(null); reset(); }}
           className="flex items-center gap-2 text-gray-400 hover:text-white transition-colors text-sm font-medium"
@@ -295,35 +293,9 @@ export default function Home() {
           <span className="hidden sm:block">Home</span>
         </button>
 
-        {/* Mode-specific tabs */}
-        {viewMode === 'live' && (
-          <div className="flex items-center gap-1 bg-white/5 rounded-xl p-1">
-            {([
-              { id: 'season' as LiveTab, label: 'My Season', icon: '🏀' },
-              { id: 'schedule' as LiveTab, label: 'NBA Schedule', icon: '📅' },
-            ]).map(tab => (
-              <button
-                key={tab.id}
-                onClick={() => setLiveTab(tab.id)}
-                className={`flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-sm font-medium transition-all ${
-                  liveTab === tab.id
-                    ? 'bg-orange-500 text-white shadow-sm'
-                    : 'text-gray-400 hover:text-white'
-                }`}
-              >
-                <span>{tab.icon}</span>
-                <span>{tab.label}</span>
-              </button>
-            ))}
-          </div>
-        )}
+        <span className="text-sm font-medium text-gray-300">GM Analytics</span>
 
-        {viewMode === 'historical' && (
-          <span className="text-sm font-medium text-gray-300">Historical GM Standings</span>
-        )}
-
-        {/* Right utilities */}
-        {viewMode === 'historical' && currentLeagueKey && (
+        {currentLeagueKey ? (
           <div className="flex items-center gap-2">
             <button
               onClick={() => reset()}
@@ -339,41 +311,88 @@ export default function Home() {
               {isClearingCache ? 'Clearing…' : 'Clear Cache'}
             </button>
           </div>
-        )}
-
-        {viewMode === 'live' && (
-          <div className="w-24" /> /* spacer to keep tabs centred */
+        ) : (
+          <div className="w-24" />
         )}
       </div>
     </div>
   );
 
-  // ─── Live League view ────────────────────────────────────────────────────────
+  // ─── Live League view — MetaMask-style bottom nav ─────────────────────────────
   if (viewMode === 'live') {
+    const handleLiveAuth = async () => {
+      const { initiateAuth, getAuthState, isTokenExpired, clearAuthState } = await import('@/lib/yahoo-api');
+      const state = getAuthState();
+      if (state.accessToken && !isTokenExpired()) clearAuthState();
+      initiateAuth();
+    };
+
     return (
-      <div className="min-h-screen bg-gray-950">
-        <NavBar />
-        <div className="max-w-7xl mx-auto px-4 py-8">
-          {liveTab === 'season' && <CurrentSeason />}
-          {liveTab === 'schedule' && (
-            <>
-              <div className="mb-6">
-                <h2 className="text-2xl font-bold text-white mb-1">NBA Schedule Grid</h2>
-                <p className="text-gray-400 text-sm">
-                  Identify which teams have the best schedule this week — plan your streaming adds and waiver pickups.
-                </p>
+      <div className="min-h-screen bg-gray-950 flex flex-col">
+        {/* Slim fixed top header */}
+        <header className="sticky top-0 z-20 bg-gray-950/95 backdrop-blur-xl border-b border-white/[0.07]">
+          <div className="h-14 flex items-center justify-between px-4 max-w-2xl mx-auto w-full">
+            <button
+              onClick={() => { setViewMode(null); reset(); }}
+              className="h-9 w-9 flex items-center justify-center rounded-xl bg-white/5 text-gray-400 hover:text-white hover:bg-white/10 transition-colors shrink-0"
+            >
+              ←
+            </button>
+            <span className="font-semibold text-white text-sm">
+              {liveTab === 'season' ? 'My Season' : 'NBA Schedule'}
+            </span>
+            <button
+              onClick={handleLiveAuth}
+              className="h-9 px-3.5 rounded-xl bg-orange-500/15 text-orange-400 text-xs font-semibold hover:bg-orange-500/25 transition-colors shrink-0"
+            >
+              {liveIsAuthed ? 'Switch' : 'Login'}
+            </button>
+          </div>
+        </header>
+
+        {/* Scrollable content — padded for bottom nav */}
+        <div className="flex-1 pb-16">
+          <div className="px-4 py-4 max-w-2xl mx-auto">
+            {liveTab === 'season' && <CurrentSeason />}
+            {liveTab === 'schedule' && (
+              <div>
+                <div className="mb-4">
+                  <h2 className="text-lg font-bold text-white">NBA Schedule</h2>
+                  <p className="text-gray-500 text-xs mt-0.5">Best schedule this week — plan your streaming adds.</p>
+                </div>
+                <ScheduleGrid />
               </div>
-              <ScheduleGrid />
-            </>
-          )}
+            )}
+          </div>
         </div>
+
+        {/* Fixed bottom tab bar */}
+        <nav className="fixed bottom-0 left-0 right-0 z-20 bg-gray-950/95 backdrop-blur-xl border-t border-white/[0.07]">
+          <div className="grid grid-cols-2 max-w-sm mx-auto">
+            {([
+              { id: 'season' as LiveTab, icon: '🏀', label: 'My Season' },
+              { id: 'schedule' as LiveTab, icon: '📅', label: 'Schedule' },
+            ] as const).map(tab => (
+              <button
+                key={tab.id}
+                onClick={() => setLiveTab(tab.id)}
+                className={`flex flex-col items-center justify-center h-16 gap-1 transition-colors active:scale-95 ${
+                  liveTab === tab.id ? 'text-orange-400' : 'text-gray-600 hover:text-gray-400'
+                }`}
+              >
+                <span className="text-xl leading-none">{tab.icon}</span>
+                <span className="text-[10px] font-semibold tracking-wide uppercase">{tab.label}</span>
+              </button>
+            ))}
+          </div>
+        </nav>
       </div>
     );
   }
 
   // ─── Historical GM Standings view ────────────────────────────────────────────
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
+    <div className="min-h-screen bg-gray-950">
       <NavBar />
       <div className="max-w-7xl mx-auto px-4 py-8">
         {error && (

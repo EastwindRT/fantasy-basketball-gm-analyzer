@@ -459,31 +459,35 @@ export default function CurrentSeason() {
               </div>
 
               {userMatchup ? (
-                <div className="grid grid-cols-3 items-start gap-2">
-                  {/* My team */}
-                  <div className="text-right">
-                    <div className="font-bold text-white text-sm leading-tight truncate">
-                      {myTeam?.team_name ?? '—'}
+                <div>
+                  {/* Team names row */}
+                  <div className="grid grid-cols-[1fr_32px_1fr] items-center gap-2 mb-5">
+                    <div className="text-right">
+                      <div className="font-bold text-white text-sm leading-tight">{myTeam?.team_name ?? '—'}</div>
+                      <div className="text-[10px] text-orange-400/70 mt-0.5 font-medium">You</div>
                     </div>
-                    <div className="text-[11px] mt-1 text-gray-500">
-                      <span className="text-emerald-400 font-bold">{curRecord.won}</span>
-                      <span className="mx-0.5 text-gray-700">·</span>
-                      <span>{curRecord.tied}</span>
-                      <span className="mx-0.5 text-gray-700">·</span>
-                      <span className="text-rose-400 font-bold">{curRecord.lost}</span>
-                      <span className="text-gray-700 ml-1 text-[9px]">now</span>
+                    <div className="flex items-center justify-center">
+                      <span className="w-7 h-7 rounded-full bg-white/5 flex items-center justify-center text-gray-700 text-[9px] font-bold">VS</span>
+                    </div>
+                    <div className="text-left">
+                      <div className="font-bold text-white text-sm leading-tight">{oppTeam?.team_name ?? '—'}</div>
+                      <div className="text-[10px] text-gray-600 mt-0.5 font-medium">Opponent</div>
                     </div>
                   </div>
 
-                  {/* VS */}
-                  <div className="text-center pt-0.5">
-                    <span className="text-gray-700 font-bold text-xs">vs</span>
-                  </div>
-
-                  {/* Opponent */}
-                  <div className="text-left">
-                    <div className="font-bold text-white text-sm leading-tight truncate">
-                      {oppTeam?.team_name ?? '—'}
+                  {/* Big score display — MetaMask balance style */}
+                  <div className="flex items-end justify-center gap-8 pb-1">
+                    <div className="text-center">
+                      <div className="text-5xl font-bold text-emerald-400 leading-none tabular-nums">{curRecord.won}</div>
+                      <div className="text-[9px] uppercase tracking-widest text-gray-600 mt-1.5">Cats Won</div>
+                    </div>
+                    <div className="text-center pb-1">
+                      <div className="text-2xl font-bold text-gray-600 leading-none tabular-nums">{curRecord.tied}</div>
+                      <div className="text-[9px] uppercase tracking-widest text-gray-700 mt-1.5">Tied</div>
+                    </div>
+                    <div className="text-center">
+                      <div className="text-5xl font-bold text-rose-400 leading-none tabular-nums">{curRecord.lost}</div>
+                      <div className="text-[9px] uppercase tracking-widest text-gray-600 mt-1.5">Cats Lost</div>
                     </div>
                   </div>
                 </div>
@@ -524,13 +528,13 @@ export default function CurrentSeason() {
                     return (
                       <div
                         key={cat.stat_id}
-                        className={`grid grid-cols-[1fr_80px_1fr] items-center px-5 py-2.5 border-b border-white/5 transition-colors hover:bg-white/3 ${
+                        className={`grid grid-cols-[1fr_76px_1fr] items-center px-4 py-3.5 border-b border-white/5 transition-colors hover:bg-white/3 ${
                           result === 'win' ? 'bg-emerald-500/5' : result === 'loss' ? 'bg-rose-500/5' : ''
                         }`}
                       >
                         {/* My value */}
-                        <div className="text-right pr-4">
-                          <div className={`text-[15px] font-bold tabular-nums ${myColor}`}>
+                        <div className="text-right pr-3">
+                          <div className={`text-xl font-bold tabular-nums ${myColor}`}>
                             {fmtStat(myVal, cat.stat_id)}
                           </div>
                         </div>
@@ -546,8 +550,8 @@ export default function CurrentSeason() {
                         </div>
 
                         {/* Opp value */}
-                        <div className="text-left pl-4">
-                          <div className={`text-[15px] font-bold tabular-nums ${oppColor}`}>
+                        <div className="text-left pl-3">
+                          <div className={`text-xl font-bold tabular-nums ${oppColor}`}>
                             {fmtStat(oppVal, cat.stat_id)}
                           </div>
                         </div>
@@ -620,13 +624,13 @@ export default function CurrentSeason() {
                         return (
                           <div
                             key={cat.stat_id}
-                            className={`grid grid-cols-[1fr_80px_1fr] items-center px-5 py-2 border-b border-white/5 ${
+                            className={`grid grid-cols-[1fr_76px_1fr] items-center px-4 py-3.5 border-b border-white/5 ${
                               projResult === 'win' ? 'bg-emerald-500/5' : projResult === 'loss' ? 'bg-rose-500/5' : ''
                             }`}
                           >
                             {/* My projected value */}
-                            <div className="text-right pr-4">
-                              <div className={`text-[15px] font-bold tabular-nums ${myColor}`}>
+                            <div className="text-right pr-3">
+                              <div className={`text-xl font-bold tabular-nums ${myColor}`}>
                                 {fmtStat(myProj, cat.stat_id)}
                               </div>
                               {myDelta !== null && myDelta > 0 && (
@@ -645,8 +649,8 @@ export default function CurrentSeason() {
                             </div>
 
                             {/* Opp projected value */}
-                            <div className="text-left pl-4">
-                              <div className={`text-[15px] font-bold tabular-nums ${oppColor}`}>
+                            <div className="text-left pl-3">
+                              <div className={`text-xl font-bold tabular-nums ${oppColor}`}>
                                 {fmtStat(oppProj, cat.stat_id)}
                               </div>
                               {oppDelta !== null && oppDelta > 0 && (
@@ -710,8 +714,8 @@ export default function CurrentSeason() {
                         isOpp ? 'bg-blue-500/5'    : ''
                       }`}
                     >
-                      <td className="px-4 py-2.5 text-gray-600 font-semibold w-8">{team.standings.rank}</td>
-                      <td className="px-2 py-2.5">
+                      <td className="px-4 py-3 text-gray-600 font-semibold w-8">{team.standings.rank}</td>
+                      <td className="px-2 py-3">
                         <div className="flex items-center gap-1.5">
                           {isMe  && <span className="text-[9px] font-bold px-1 py-0.5 bg-orange-500 text-white rounded shrink-0">YOU</span>}
                           {isOpp && <span className="text-[9px] font-bold px-1 py-0.5 bg-blue-600  text-white rounded shrink-0">OPP</span>}
@@ -720,9 +724,9 @@ export default function CurrentSeason() {
                           </span>
                         </div>
                       </td>
-                      <td className="px-2 py-2.5 text-center text-emerald-400 font-semibold">{team.standings.wins}</td>
-                      <td className="px-2 py-2.5 text-center text-rose-400 font-semibold">{team.standings.losses}</td>
-                      <td className="px-2 py-2.5 text-center text-gray-400">{(winPct * 100).toFixed(0)}%</td>
+                      <td className="px-2 py-3 text-center text-emerald-400 font-semibold">{team.standings.wins}</td>
+                      <td className="px-2 py-3 text-center text-rose-400 font-semibold">{team.standings.losses}</td>
+                      <td className="px-2 py-3 text-center text-gray-400">{(winPct * 100).toFixed(0)}%</td>
                     </tr>
                   );
                 })}

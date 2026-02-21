@@ -101,64 +101,55 @@ export default function ScheduleGrid() {
   })();
 
   return (
-    <div className="w-full space-y-4">
-      {/* Controls */}
-      <div className="flex flex-wrap items-center gap-3">
-        {/* From date */}
-        <div className="flex items-center gap-2">
-          <label className="text-sm font-medium text-gray-400 whitespace-nowrap">From</label>
+    <div className="w-full space-y-3">
+      {/* Controls — stacked on mobile */}
+      <div className="flex flex-col gap-2.5">
+        <div className="flex flex-wrap items-center gap-2">
+          {/* From date */}
+          <label className="text-xs font-medium text-gray-500 whitespace-nowrap">From</label>
           <input
             type="date"
             value={fromDate}
             onChange={e => setFromDate(e.target.value)}
-            className="border border-white/10 rounded-lg px-3 py-1.5 text-sm bg-white/5 text-white focus:outline-none focus:ring-2 focus:ring-orange-500"
+            className="border border-white/10 rounded-xl px-3 py-2 text-sm bg-white/5 text-white focus:outline-none focus:ring-2 focus:ring-orange-500"
           />
+          {fromDate && (
+            <span className="text-xs text-gray-600">
+              {days}d · ends {endDateISO}
+            </span>
+          )}
+          {loading && <span className="text-xs text-gray-500 animate-pulse">Loading…</span>}
         </div>
 
-        {/* Week buttons — snap to Sunday (fantasy week end) */}
-        <div className="flex items-center gap-1.5">
-          <span className="text-sm font-medium text-gray-400">Through</span>
+        <div className="flex items-center gap-2">
+          {/* Week buttons */}
+          <span className="text-xs font-medium text-gray-500">Through</span>
           {([1, 2] as const).map(w => (
             <button
               key={w}
               onClick={() => setWeeks(w)}
-              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-                weeks === w
-                  ? 'bg-orange-500 text-white'
-                  : 'bg-white/5 text-gray-300 hover:bg-white/10'
+              className={`px-3.5 py-2 rounded-xl text-sm font-medium transition-colors active:scale-95 ${
+                weeks === w ? 'bg-orange-500 text-white' : 'bg-white/5 text-gray-300 hover:bg-white/10'
               }`}
             >
               {w === 1 ? 'This Week' : 'Next Week'}
             </button>
           ))}
-          {fromDate && (
-            <span className="text-xs text-gray-600 ml-1">
-              ({days}d, ends {endDateISO})
-            </span>
-          )}
-        </div>
 
-        {/* Conference filter */}
-        <div className="flex items-center gap-1.5">
-          <span className="text-sm font-medium text-gray-400">Conf</span>
+          {/* Conference filter */}
+          <span className="text-xs font-medium text-gray-500 ml-2">Conf</span>
           {(['All', 'East', 'West'] as const).map(c => (
             <button
               key={c}
               onClick={() => setConfFilter(c)}
-              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-                confFilter === c
-                  ? 'bg-orange-500 text-white'
-                  : 'bg-white/5 text-gray-300 hover:bg-white/10'
+              className={`px-3 py-2 rounded-xl text-sm font-medium transition-colors active:scale-95 ${
+                confFilter === c ? 'bg-orange-500 text-white' : 'bg-white/5 text-gray-300 hover:bg-white/10'
               }`}
             >
               {c}
             </button>
           ))}
         </div>
-
-        {loading && (
-          <span className="text-sm text-gray-500 animate-pulse">Loading…</span>
-        )}
       </div>
 
       {/* Legend */}
