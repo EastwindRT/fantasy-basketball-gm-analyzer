@@ -10,6 +10,7 @@ import {
   fetchLeague,
   fetchTeamRoster,
   fetchPlayerAverages,
+  fetchTeamWeekStats,
   getAuthState,
   isTokenExpired,
   initiateAuth,
@@ -116,6 +117,9 @@ export default function CurrentSeason() {
   const [myAvgs, setMyAvgs] = useState<Map<string, Record<string, number>>>(new Map());
   const [oppAvgs, setOppAvgs] = useState<Map<string, Record<string, number>>>(new Map());
   const [scheduleData, setScheduleData] = useState<NbaScheduleData | null>(null);
+  // Week stats — fills in FGM/FGA/FTM/FTA that the scoreboard may omit
+  const [myWeekStats,  setMyWeekStats]  = useState<Record<string, number>>({});
+  const [oppWeekStats, setOppWeekStats] = useState<Record<string, number>>({});
 
   // ── Auth check ──
   useEffect(() => {
@@ -149,6 +153,8 @@ export default function CurrentSeason() {
     setMyAvgs(new Map());
     setOppAvgs(new Map());
     setScheduleData(null);
+    setMyWeekStats({});
+    setOppWeekStats({});
     try {
       const [leagueInfo, teamStandings, weekMatchups, cats] = await Promise.all([
         fetchLeague(leagueKey),
@@ -202,6 +208,15 @@ export default function CurrentSeason() {
         if (cancelled) return;
         setMyRoster(mRoster);
         setOppRoster(oRoster);
+
+        // Fetch current week stats for both teams (gives us FGM/FGA/FTM/FTA)
+        const [mWeekStats, oWeekStats] = await Promise.all([
+          fetchTeamWeekStats(myTeam!.team_key),
+          fetchTeamWeekStats(oppTeam!.team_key),
+        ]);
+        if (cancelled) return;
+        setMyWeekStats(mWeekStats);
+        setOppWeekStats(oWeekStats);
 
         // Player averages (batch both rosters)
         const allKeys = [
@@ -345,9 +360,14 @@ export default function CurrentSeason() {
     return proj;
   };
 
+  // Merge week stats (FGM/FGA/FTM/FTA) into matchup stats — scoreboard may omit display-only stats
+  // Week stats fill gaps; scoreboard values take precedence where both exist
+  const myFullStats  = myTeam  ? { ...myWeekStats,  ...myTeam.stats  } : undefined;
+  const oppFullStats = oppTeam ? { ...oppWeekStats, ...oppTeam.stats } : undefined;
+
   const hasRosterProj = scheduleData !== null && (myAvgs.size > 0 || oppAvgs.size > 0);
-  const myProjected  = myTeam  ? (hasRosterProj ? computeProjected(myRoster,  myAvgs,  myTeam.stats)  : computeRateProjection(myRoster,  myTeam.stats))  : null;
-  const oppProjected = oppTeam ? (hasRosterProj ? computeProjected(oppRoster, oppAvgs, oppTeam.stats) : computeRateProjection(oppRoster, oppTeam.stats)) : null;
+  const myProjected  = myFullStats  ? (hasRosterProj ? computeProjected(myRoster,  myAvgs,  myFullStats)  : computeRateProjection(myRoster,  myFullStats))  : null;
+  const oppProjected = oppFullStats ? (hasRosterProj ? computeProjected(oppRoster, oppAvgs, oppFullStats) : computeRateProjection(oppRoster, oppFullStats)) : null;
   const projLabel    = hasRosterProj ? 'roster-based' : loadingProj ? 'computing…' : 'rate estimate';
 
   // ── Category records ──

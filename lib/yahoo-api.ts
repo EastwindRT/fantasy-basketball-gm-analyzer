@@ -1452,6 +1452,42 @@ export async function fetchCurrentMatchup(leagueKey: string): Promise<MatchupDat
 }
 
 /**
+ * Fetch a team's accumulated stats for the current week.
+ * Used to get FGM/FGA/FTM/FTA which the scoreboard may omit.
+ * Returns { stat_id: value } map.
+ */
+export async function fetchTeamWeekStats(teamKey: string): Promise<Record<string, number>> {
+  try {
+    const data = await apiRequest(`/teams;team_keys=${teamKey}/stats;type=week`);
+    const teamsData = data?.fantasy_content?.teams;
+    if (!teamsData) return {};
+
+    const teamEntry = teamsData['0']?.team ?? teamsData[0]?.team;
+    if (!teamEntry) return {};
+
+    const result: Record<string, number> = {};
+    const arr = Array.isArray(teamEntry) ? teamEntry : [teamEntry];
+    for (const chunk of arr) {
+      if (chunk?.team_stats?.stats) {
+        const rawStats = chunk.team_stats.stats;
+        const statsArr: any[] = Array.isArray(rawStats) ? rawStats : Object.values(rawStats);
+        statsArr.forEach((s: any) => {
+          if (s?.stat?.stat_id != null) {
+            result[String(s.stat.stat_id)] = parseFloat(s.stat.value ?? '0') || 0;
+          }
+        });
+        break;
+      }
+    }
+    console.log(`fetchTeamWeekStats(${teamKey}): ${Object.keys(result).length} stats`);
+    return result;
+  } catch (err) {
+    console.warn(`fetchTeamWeekStats(${teamKey}) failed:`, err);
+    return {};
+  }
+}
+
+/**
  * Fetch the active roster for a team.
  * Returns players with their NBA team abbreviation and injury status.
  */
