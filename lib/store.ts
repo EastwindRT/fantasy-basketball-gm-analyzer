@@ -20,6 +20,11 @@ interface AppState {
   setLeagueData: (data: LeagueData | null) => void;
   setCurrentLeague: (leagueKey: string, seasons: string[], gmUsername?: string, seasonKeys?: { [season: string]: string }) => void;
 
+  // Live league state (shared between CurrentSeason and PlayoffPredictor)
+  liveLeagueKey: string | null;
+  liveCurrentWeek: number | null;
+  setLiveLeagueData: (key: string, week: number) => void;
+
   // GM Analytics
   gmAnalytics: Map<string, GMAnalytics> | null;
   setGMAnalytics: (analytics: Map<string, GMAnalytics> | null) => void;
@@ -58,6 +63,10 @@ export const useAppStore = create<AppState>((set) => ({
       seasonLeagueKeys: seasonKeys || {},
     }),
 
+  liveLeagueKey: null,
+  liveCurrentWeek: null,
+  setLiveLeagueData: (key, week) => set({ liveLeagueKey: key, liveCurrentWeek: week }),
+
   gmAnalytics: null,
   setGMAnalytics: (analytics) => set({ gmAnalytics: analytics }),
   selectedGM: null,
@@ -83,5 +92,7 @@ export const useAppStore = create<AppState>((set) => ({
       isLoading: false,
       loadingMessage: '',
       error: null,
+      liveLeagueKey: null,
+      liveCurrentWeek: null,
     }),
 }));

@@ -26,10 +26,11 @@ import ErrorDisplay from '@/components/ErrorDisplay';
 import ExportButton from '@/components/ExportButton';
 import CurrentSeason from '@/components/CurrentSeason';
 import ScheduleGrid from '@/components/ScheduleGrid';
+import PlayoffPredictor from '@/components/PlayoffPredictor';
 
 // null = landing page, 'live' = current season + schedule, 'historical' = GM analyzer
 type ViewMode = null | 'live' | 'historical';
-type LiveTab = 'season' | 'schedule';
+type LiveTab = 'season' | 'schedule' | 'playoff';
 
 export default function Home() {
   const {
@@ -339,7 +340,7 @@ export default function Home() {
               ←
             </button>
             <span className="font-semibold text-white text-sm">
-              {liveTab === 'season' ? 'My Season' : 'NBA Schedule'}
+              {liveTab === 'season' ? 'My Season' : liveTab === 'schedule' ? 'NBA Schedule' : 'Season Outlook'}
             </span>
             <button
               onClick={handleLiveAuth}
@@ -363,15 +364,17 @@ export default function Home() {
                 <ScheduleGrid />
               </div>
             )}
+            {liveTab === 'playoff' && <PlayoffPredictor />}
           </div>
         </div>
 
         {/* Fixed bottom tab bar */}
         <nav className="fixed bottom-0 left-0 right-0 z-20 bg-gray-950/95 backdrop-blur-xl border-t border-white/[0.07]">
-          <div className="grid grid-cols-2 max-w-sm mx-auto">
+          <div className="grid grid-cols-3 max-w-sm mx-auto">
             {([
               { id: 'season' as LiveTab, icon: '🏀', label: 'My Season' },
               { id: 'schedule' as LiveTab, icon: '📅', label: 'Schedule' },
+              { id: 'playoff' as LiveTab, icon: '📊', label: 'Outlook' },
             ] as const).map(tab => (
               <button
                 key={tab.id}

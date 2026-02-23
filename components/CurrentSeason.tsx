@@ -16,6 +16,7 @@ import {
   initiateAuth,
 } from '@/lib/yahoo-api';
 import type { TeamData, MatchupData, RosterPlayer, StatCategory } from '@/lib/yahoo-api';
+import { useAppStore } from '@/lib/store';
 
 // Percentage stat dependencies: stat_id -> { made_id, att_id }
 // Used to project FG%, FT%, 3PT% from underlying makes/attempts averages
@@ -93,6 +94,7 @@ function recordFrom(cats: StatCategory[], myStats: Record<string, number>, oppSt
 }
 
 export default function CurrentSeason() {
+  const setLiveLeagueData = useAppStore(s => s.setLiveLeagueData);
   const [isAuth, setIsAuth] = useState(false);
   const [leagues, setLeagues] = useState<Array<{ league_key: string; name: string; season: string }>>([]);
   const [selectedKey, setSelectedKey] = useState('');
@@ -164,6 +166,7 @@ export default function CurrentSeason() {
       ]);
       setLeagueName(leagueInfo.name);
       setCurrentWeek(leagueInfo.current_week ?? null);
+      if (leagueInfo.current_week != null) setLiveLeagueData(leagueKey, leagueInfo.current_week);
       setStandings(teamStandings.sort((a, b) => a.standings.rank - b.standings.rank));
       setMatchups(weekMatchups);
       setAllCats(cats);
