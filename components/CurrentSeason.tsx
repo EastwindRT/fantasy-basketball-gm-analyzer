@@ -179,7 +179,7 @@ export default function CurrentSeason() {
     } finally {
       setLoadingData(false);
     }
-  }, []);
+  }, [setLiveLeagueData]);
 
   useEffect(() => {
     if (selectedKey) loadLeagueData(selectedKey);
